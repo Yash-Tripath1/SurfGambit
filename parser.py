@@ -15,6 +15,20 @@ class HTMLNode:
         return f"HTMLNode(tag={self.tag!r}, attrs={self.attrs}, children={len(self.children)})"
 
 
+def parse_attributes(attrs_str):
+    """Parse HTML attributes string into a dict."""
+    attrs = {}
+    parts = attrs_str.split()
+    for part in parts:
+        if "=" in part:
+            key, val = part.split("=", 1)
+            val = val.strip('"\'')
+            attrs[key] = val
+        else:
+            attrs[part] = True
+    return attrs
+
+
 def parse_html(html):
     """Parse HTML string into a tree of HTMLNode objects."""
     root = HTMLNode(tag="html")
@@ -24,7 +38,6 @@ def parse_html(html):
 
     while i < n:
         if html[i] == "<":
-            # Opening or closing tag
             if html[i+1] == "/":
                 # Closing tag
                 i += 2
@@ -45,12 +58,23 @@ def parse_html(html):
                     tag = tag_part[:space_idx]
                     attrs_str = tag_part[space_idx+1:]
                     attrs = parse_attributes(attrs_str)
+
+                # Skip style, script, and other non-content tags
+                if tag in ["style", "script", "link", "meta"]:
+                    # Find the closing tag
+                    closing_tag = f"</{tag}>"
+                    skip_end = html.find(closing_tag, i)
+                    if skip_end != -1:
+                        i = skip_end + len(closing_tag)
+                    else:
+                        i = tag_end + 1
+                    continue
+
                 node = HTMLNode(tag=tag, attrs=attrs)
                 stack[-1].children.append(node)
                 stack.append(node)
                 i = tag_end + 1
         else:
-            # Text node
             text_end = html.find("<", i)
             if text_end == -1:
                 text_end = n
@@ -62,20 +86,6 @@ def parse_html(html):
     return root
 
 
-def parse_attributes(attrs_str):
-    """Parse HTML attributes string into a dict."""
-    attrs = {}
-    parts = attrs_str.split()
-    for part in parts:
-        if "=" in part:
-            key, val = part.split("=", 1)
-            val = val.strip('"\'')
-            attrs[key] = val
-        else:
-            attrs[part] = True  # Boolean attribute (e.g., <input disabled>)
-    return attrs
-
-
 def render_node(node, indent=0):
     """Render an HTMLNode tree as a string (for debugging)."""
     if node.text:
@@ -85,17 +95,3 @@ def render_node(node, indent=0):
         result += render_node(child, indent + 1)
     result += "  " * indent + f"</{node.tag}>\n"
     return result
-
-
-if __name__ == "__main__":
-    html = """
-    <html>
-        <head><title>Test</title></head>
-        <body>
-            <h1>Hello</h1>
-            <p>World <b>bold</b>!</p>
-        </body>
-    </html>
-    """
-    tree = parse_html(html)
-    print(render_node(tree))
