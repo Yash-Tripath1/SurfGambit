@@ -1,96 +1,746 @@
 import tkinter as tk
-from network import fetch_url
-from parser import parse_html
-from layout import layout_tree
+from tkinter import ttk
+import threading
+import urllib.parse
+from typing import Dict, List, Tuple, Optional
 
+import network
+import parser
+import layout
 
-class SurfGambit:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("SurfGambit: My Window to the Broken Web")
-        self.root.geometry("800x600")
+WELCOME_HTML = """
+<html>
+<head>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            background-color: #121212; 
+            color: #e0e0e0; 
+            margin: 40px; 
+            text-align: center; 
+        }
+        .card { 
+            background-color: #1e1e1e; 
+            border: 1px solid #333; 
+            padding: 25px; 
+            margin: 20px auto; 
+            max-width: 650px; 
+            text-align: left; 
+        }
+        h1 { 
+            color: #00adb5; 
+            font-size: 38px; 
+            margin-bottom: 5px; 
+            text-align: center; 
+        }
+        h2 { 
+            color: #00adb5; 
+            font-size: 20px; 
+            border-bottom: 1px solid #333; 
+            padding-bottom: 8px; 
+            margin-top: 0px;
+        }
+        p { 
+            line-height: 1.6; 
+            font-size: 14px;
+        }
+        a { 
+            color: #00adb5; 
+            font-weight: bold; 
+            text-decoration: underline;
+        }
+        .tech-list { 
+            background-color: #151515; 
+            padding: 15px; 
+            border-left: 4px solid #00adb5; 
+            font-family: monospace; 
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .psycho { 
+            font-style: italic; 
+            color: #ff5722; 
+            font-weight: bold; 
+            text-align: center; 
+            margin-top: 15px; 
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>SurfGambit Browser</h1>
+    <div class="psycho">Vibe-Coded &amp; Fully Capable. Built entirely from Sockets &amp; Tkinter!</div>
+    
+    <div class="card">
+        <h2>🚀 Deeply Custom Architecture</h2>
+        <p>No high-level HTTP/HTML engines used. SurfGambit implements its entire network-to-pixels pipeline from scratch:</p>
+        <div class="tech-list">
+            - [network.py]: Raw TCP/IP sockets over SSL/TLS, chunked encoding, and gzip compression.<br>
+            - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
+            - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>🌐 Interactive Features</h2>
+        <p>This browser is equipped with power-user controls for testing:</p>
+        <p>
+            - <b>Multiple Tabs</b>: Browse multiple pages concurrently.<br>
+            - <b>Precise Zoom</b>: Use ➕ / ➖ buttons to scale elements with responsive re-layout.<br>
+            - <b>Developer Tools</b>: Toggle the side panel to view DOM, CSS, or Raw HTML source!<br>
+            - <b>History Navigation</b>: Full back/forward page history tracking.<br>
+            - <b>Word Wrapping &amp; Alignment</b>: Modern word flow and CSS style resolution.
+        </p>
+    </div>
 
-        # Address bar
-        self.address_frame = tk.Frame(root)
-        self.address_frame.pack(fill=tk.X, padx=5, pady=5)
+    <div class="card">
+        <h2>🔗 Standard Web Testbench</h2>
+        <p>Try entering these lightweight URLs in the address bar above:</p>
+        <p>
+            - <a href="http://example.com">http://example.com</a> (Standard HTTP test site)<br>
+            - <a href="http://neverssl.com">http://neverssl.com</a> (Great raw no-SSL sandbox)<br>
+            - <a href="https://text.npr.org">https://text.npr.org</a> (NPR News Text-Only)<br>
+            - <a href="https://news.ycombinator.com">https://news.ycombinator.com</a> (Hacker News)
+        </p>
+    </div>
+    
+    <div style="color: #666; font-size: 12px; margin-top: 40px;">
+        SurfGambit v1.1 | Yash Tripathi (18, India) &amp; Arena.ai Agent
+    </div>
+</body>
+</html>
+"""
 
-        self.address_label = tk.Label(self.address_frame, text="URL:")
-        self.address_label.pack(side=tk.LEFT)
+class BrowserTab(ttk.Frame):
+    def __init__(self, parent: ttk.Notebook, main_browser: 'SurfGambitApp'):
+        super().__init__(parent)
+        self.parent = parent
+        self.main_browser = main_browser
+        
+        # Navigation History
+        self.back_stack: List[str] = []
+        self.forward_stack: List[str] = []
+        self.current_url: str = "surfgambit://welcome"
+        
+        # State & Parsed Data
+        self.raw_html: str = ""
+        self.dom_tree: Optional[parser.HTMLNode] = None
+        self.css_rules: List[Tuple[str, Dict[str, str]]] = []
+        self.layout_tree: Optional[layout.LayoutBox] = None
+        self.zoom_level: float = 1.0
+        
+        # Thread lock and active loading control
+        self.is_loading = False
+        self.loading_thread: Optional[threading.Thread] = None
+        
+        # UI Setup: Canvas and scrollbar
+        self.canvas = tk.Canvas(self, bg="white", highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        
+        # Link routing map (ID to URL)
+        self.link_map: Dict[int, str] = {}
+        
+        # Mouse / Keyboard Scrolling Bindings
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)
+        self.canvas.bind("<Button-4>", self.on_mousewheel)
+        self.canvas.bind("<Button-5>", self.on_mousewheel)
+        
+        # Canvas Link Event Bindings
+        self.canvas.tag_bind("link", "<Enter>", self.on_link_enter)
+        self.canvas.tag_bind("link", "<Leave>", self.on_link_leave)
+        self.canvas.tag_bind("link", "<Button-1>", self.on_link_click)
+        
+        # Resize detection
+        self.canvas.bind("<Configure>", self.on_resize)
+        self.last_width = 0
+        
+        # Initial Welcome Load
+        self.load_welcome_page()
 
-        self.address_entry = tk.Entry(self.address_frame, width=60)
-        self.address_entry.pack(side=tk.LEFT, expand=True, fill=tk.X)
-        self.address_entry.insert(0, "https://example.com")
+    def load_welcome_page(self):
+        self.current_url = "surfgambit://welcome"
+        self.raw_html = WELCOME_HTML
+        self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+        self.css_rules = parser.get_style_sheets(self.dom_tree)
+        parser.resolve_styles(self.dom_tree, self.css_rules)
+        self.trigger_layout()
 
-        self.go_button = tk.Button(self.address_frame, text="Go", command=self.load_url)
-        self.go_button.pack(side=tk.LEFT, padx=5)
-
-        # Browser canvas
-        self.canvas = tk.Canvas(root, width=800, height=550, bg="white")
-        self.canvas.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
-        self.canvas.bind("<Button-1>", self.on_click)
-
-        # Store link positions
-        self.links = {}
-
-    def on_click(self, event):
-        """Handle clicks on links."""
-        x, y = event.x, event.y
-        for (x1, y1, x2, y2), url in self.links.items():
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                self.address_entry.delete(0, tk.END)
-                self.address_entry.insert(0, url)
-                self.load_url()
-                return
-
-    def render_box(self, box, x_offset=0, y_offset=0):
-        """Render a layout box and its children."""
-        node = box.node
-        x = box.x + x_offset
-        y = box.y + y_offset
-
-        if node.tag == "a":
-            href = node.attrs.get("href", "")
-            text = "".join(child.text for child in node.children if child.text)
-            if text:
-                text_id = self.canvas.create_text(x, y, text=text, fill="blue", anchor=tk.NW)
-                bbox = self.canvas.bbox(text_id)
-                self.links[(bbox[0], bbox[1], bbox[2], bbox[3])] = href
-        elif node.tag in ["h1", "h2", "h3"]:
-            text = "".join(child.text for child in node.children if child.text)
-            size = 20 if node.tag == "h1" else 16 if node.tag == "h2" else 14
-            self.canvas.create_text(x, y, text=text, font=("Arial", size, "bold"), anchor=tk.NW)
-        elif node.tag in ["b", "i"]:
-            text = "".join(child.text for child in node.children if child.text)
-            weight = "bold" if node.tag == "b" else "italic"
-            self.canvas.create_text(x, y, text=text, font=("Arial", 10, weight), anchor=tk.NW)
-        elif node.text:
-            self.canvas.create_text(x, y, text=node.text, font=("Arial", 10), anchor=tk.NW)
-        elif node.tag in ["p", "div", "body", "html"]:
-            y_offset += 5
-
-        for child_box in box.children:
-            self.render_box(child_box, x_offset, y_offset)
-
-    def load_url(self):
-        url = self.address_entry.get()
-        if not url.startswith("http"):
+    def navigate_to(self, url: str, is_history_action=False):
+        url = url.strip()
+        if not url:
+            return
+            
+        # Standardize URL
+        if not (url.startswith("http://") or url.startswith("https://") or url.startswith("surfgambit://")):
             url = "https://" + url
-        self.canvas.delete("all")
-        self.canvas.create_text(400, 300, text=f"Loading {url}...")
-        self.root.update()
-        self.links = {}
+
+        if url == "surfgambit://welcome":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.load_welcome_page()
+            self.main_browser.update_ui_state(self)
+            return
+
+        if self.is_loading:
+            return # Prevent double loading
+            
+        self.is_loading = True
+        self.main_browser.status_bar.config(text=f"Connecting to {url}...")
+        self.main_browser.show_loading_spinner(True)
+        
+        # Launch non-blocking request background thread
+        self.loading_thread = threading.Thread(
+            target=self._async_fetch_and_parse,
+            args=(url, is_history_action),
+            daemon=True
+        )
+        self.loading_thread.start()
+
+    def _async_fetch_and_parse(self, url: str, is_history_action: bool):
         try:
-            headers, body = fetch_url(url)
-            tree = parse_html(body)
-            root_box = layout_tree(tree)
-            self.canvas.delete("all")
-            self.render_box(root_box)
+            response = network.request(url)
+            # Use final resolved URL (supports redirects)
+            resolved_url = response.url
+            html_text = response.text
+            
+            # Parsing DOM and resolving stylesheets
+            dom = parser.HTMLParser(html_text).parse()
+            css = parser.get_style_sheets(dom)
+            parser.resolve_styles(dom, css)
+            
+            # Post success callback on main thread
+            self.after(0, self._on_load_success, url, resolved_url, html_text, dom, css, is_history_action)
         except Exception as e:
-            self.canvas.delete("all")
-            self.canvas.create_text(400, 300, text=f"Error: {str(e)}")
+            self.after(0, self._on_load_error, url, str(e))
+
+    def _on_load_success(self, orig_url: str, resolved_url: str, html_text: str, dom: parser.HTMLNode, css: list, is_history_action: bool):
+        self.is_loading = False
+        self.main_browser.show_loading_spinner(False)
+        
+        # Push history
+        if not is_history_action:
+            if self.current_url:
+                self.back_stack.append(self.current_url)
+            self.forward_stack.clear()
+            
+        self.current_url = resolved_url
+        self.raw_html = html_text
+        self.dom_tree = dom
+        self.css_rules = css
+        
+        # Render page
+        self.trigger_layout()
+        
+        self.main_browser.status_bar.config(text="Done")
+        self.main_browser.update_ui_state(self)
+
+    def _on_load_error(self, url: str, err_msg: str):
+        self.is_loading = False
+        self.main_browser.show_loading_spinner(False)
+        self.main_browser.status_bar.config(text=f"Failed to load: {err_msg}")
+        
+        error_html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: sans-serif; margin: 50px; background-color: #fff5f5; color: #c53030; }}
+                h1 {{ font-size: 28px; margin-bottom: 10px; border-bottom: 2px solid #feb2b2; padding-bottom: 10px; }}
+                p {{ font-size: 16px; line-height: 1.5; }}
+                .url {{ font-family: monospace; background-color: #fff; padding: 4px; border: 1px solid #fed7d7; }}
+            </style>
+        </head>
+        <body>
+            <h1>Navigation Failed 🛑</h1>
+            <p>SurfGambit was unable to load the requested page:</p>
+            <p class="url">{orig_escape(url)}</p>
+            <p><b>Error Details:</b> {orig_escape(err_msg)}</p>
+            <p>Make sure you have an active internet connection and that the server address is spelled correctly.</p>
+        </body>
+        </html>
+        """
+        self.raw_html = error_html
+        self.dom_tree = parser.HTMLParser(error_html).parse()
+        self.css_rules = []
+        parser.resolve_styles(self.dom_tree, self.css_rules)
+        self.trigger_layout()
+        self.main_browser.update_ui_state(self)
+
+    def trigger_layout(self):
+        if not self.dom_tree:
+            return
+            
+        measurer = self.main_browser.measurer
+        measurer.zoom = self.zoom_level
+        
+        # Rebuild layout tree
+        self.layout_tree = layout.build_layout_tree(self.dom_tree)
+        if self.layout_tree:
+            canvas_width = max(300, self.canvas.winfo_width())
+            # Run layout calculations
+            layout.compute_layout(self.layout_tree, 0, 0, canvas_width, measurer)
+            # Paint to canvas
+            self.render()
+            
+        # Update devtools views if active
+        self.main_browser.devtools_panel.refresh_devtools(self)
+
+    def render(self):
+        self.canvas.delete("all")
+        self.link_map.clear()
+        
+        if not self.layout_tree:
+            return
+            
+        # Total heights and scrolling region bounds
+        total_height = self.layout_tree.height
+        self.canvas.config(scrollregion=(0, 0, self.canvas.winfo_width(), total_height + 100))
+        
+        # Recursively render the layout blocks
+        self._render_box(self.layout_tree)
+
+    def _render_box(self, box: layout.LayoutBox):
+        # 1. Render Background Color
+        bg_color = box.node.style.get("background-color")
+        if bg_color and bg_color.lower() != "transparent":
+            self.canvas.create_rectangle(
+                box.x, box.y, box.x + box.width, box.y + box.height,
+                fill=bg_color, outline=""
+            )
+            
+        # 2. Render list bullets for <li> elements
+        if box.node.tag == "li":
+            parent = box.node.parent
+            if parent and parent.tag == "ol":
+                # Render sequential numbering
+                siblings = [c for c in parent.children if c.tag == "li"]
+                try:
+                    num = siblings.index(box.node) + 1
+                except ValueError:
+                    num = 1
+                bx = box.x - 20
+                by = box.y + box.padding_top + 2
+                self.canvas.create_text(
+                    bx, by, text=f"{num}.", anchor="nw", 
+                    font=("Arial", int(14 * self.zoom_level), "bold"), fill=box.node.style.get("color", "black")
+                )
+            else:
+                # Render modern circular bullets
+                bx = box.x - 15
+                by = box.y + box.padding_top + 6
+                r = 3 * self.zoom_level
+                self.canvas.create_oval(
+                    bx - r, by - r, bx + r, by + r, 
+                    fill=box.node.style.get("color", "black"), outline=""
+                )
+
+        # 3. Render inline formatting lines
+        if box.lines:
+            for line, line_h in box.lines:
+                for item in line:
+                    itype, node, style, text, rx, ry, rw, rh = item
+                    # Absolute placement on canvas
+                    ax = box.x + rx + box.padding_left
+                    ay = box.y + ry + box.padding_top
+                    
+                    if itype == "word":
+                        font_family = style.get("font-family", "sans-serif")
+                        font_size = style.get("font-size", "16px")
+                        font_weight = style.get("font-weight", "normal")
+                        font_style = style.get("font-style", "normal")
+                        
+                        # Find link target (walk up parents)
+                        is_link, href = self._find_link_ancestor(node)
+                        
+                        # Apply style values
+                        color = style.get("color", "black")
+                        if is_link:
+                            color = style.get("color", "blue") # Fallback to standard blue for links
+                        
+                        # Format text decorations
+                        font_dec = ""
+                        if is_link or style.get("text-decoration") == "underline":
+                            font_dec = "underline"
+                            
+                        # Retrieve correct Tk font
+                        tk_font = self.main_browser.measurer.get_font(font_family, font_size, font_weight, font_style)
+                        if font_dec == "underline" and not self.main_browser.measurer.headless:
+                            # Apply underline if supported by the OS font engine
+                            tk_font.configure(underline=True)
+                        
+                        # Link registration tagging
+                        tags = ()
+                        if is_link:
+                            link_id = len(self.link_map) + 1
+                            self.link_map[link_id] = href
+                            tags = ("link", f"link_{link_id}")
+                            
+                        self.canvas.create_text(
+                            ax, ay, text=text, font=tk_font, fill=color, anchor="nw", tags=tags
+                        )
+                        
+                    elif itype == "hr":
+                        # Render division line
+                        color = style.get("color", "#ccc")
+                        self.canvas.create_line(ax, ay, ax + rw, ay, fill=color, width=rh)
+                        
+        # Recursive pass
+        for child in box.children:
+            self._render_box(child)
+
+    def _find_link_ancestor(self, node: parser.HTMLNode) -> Tuple[bool, str]:
+        curr = node
+        while curr:
+            if curr.tag == "a":
+                return True, curr.attributes.get("href", "")
+            curr = curr.parent
+        return False, ""
+
+    def on_mousewheel(self, event):
+        # Universal wheel scroll (Windows/Linux/Mac fallback)
+        if event.num == 5 or event.delta < 0:
+            self.canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.canvas.yview_scroll(-1, "units")
+
+    def on_resize(self, event):
+        # Trigger layout on width resizing boundaries
+        if abs(event.width - self.last_width) > 10:
+            self.last_width = event.width
+            # Debounce resize slightly or run immediately
+            self.trigger_layout()
+
+    def on_link_enter(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                # Resolve full path info
+                full_url = urllib.parse.urljoin(self.current_url, href)
+                self.main_browser.status_bar.config(text=f"Navigate to: {full_url}")
+                self.canvas.config(cursor="hand2")
+            except ValueError:
+                pass
+
+    def on_link_leave(self, event):
+        self.main_browser.status_bar.config(text="Done")
+        self.canvas.config(cursor="")
+
+    def on_link_click(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                target_url = urllib.parse.urljoin(self.current_url, href)
+                self.navigate_to(target_url)
+            except ValueError:
+                pass
+
+
+class DevToolsFrame(ttk.Frame):
+    def __init__(self, parent: tk.PanedWindow):
+        super().__init__(parent)
+        self.parent = parent
+        
+        # Split Tabbed Frame inside DevTools
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True)
+        
+        # DOM Tree view tab
+        self.dom_tab = ttk.Frame(self.notebook)
+        self.dom_text = tk.Text(self.dom_tab, wrap="none", font=("Courier New", 11), bg="#1e1e1e", fg="#85e89d", insertbackground="white")
+        self.dom_scroll_y = ttk.Scrollbar(self.dom_tab, orient="vertical", command=self.dom_text.yview)
+        self.dom_scroll_x = ttk.Scrollbar(self.dom_tab, orient="horizontal", command=self.dom_text.xview)
+        self.dom_text.configure(yscrollcommand=self.dom_scroll_y.set, xscrollcommand=self.dom_scroll_x.set)
+        
+        self.dom_scroll_y.pack(side="right", fill="y")
+        self.dom_scroll_x.pack(side="bottom", fill="x")
+        self.dom_text.pack(side="left", fill="both", expand=True)
+        self.notebook.add(self.dom_tab, text="🔍 DOM Explorer")
+        
+        # CSS rules tab
+        self.css_tab = ttk.Frame(self.notebook)
+        self.css_text = tk.Text(self.css_tab, wrap="none", font=("Courier New", 11), bg="#1e1e1e", fg="#9ecbff", insertbackground="white")
+        self.css_scroll_y = ttk.Scrollbar(self.css_tab, orient="vertical", command=self.css_text.yview)
+        self.css_text.configure(yscrollcommand=self.css_scroll_y.set)
+        
+        self.css_scroll_y.pack(side="right", fill="y")
+        self.css_text.pack(side="left", fill="both", expand=True)
+        self.notebook.add(self.css_tab, text="🎨 Style Rules")
+        
+        # Raw source code tab
+        self.source_tab = ttk.Frame(self.notebook)
+        self.source_text = tk.Text(self.source_tab, wrap="none", font=("Courier New", 11), bg="#1e1e1e", fg="#ffab70", insertbackground="white")
+        self.source_scroll_y = ttk.Scrollbar(self.source_tab, orient="vertical", command=self.source_text.yview)
+        self.source_scroll_x = ttk.Scrollbar(self.source_tab, orient="horizontal", command=self.source_text.xview)
+        self.source_text.configure(yscrollcommand=self.source_scroll_y.set, xscrollcommand=self.source_scroll_x.set)
+        
+        self.source_scroll_y.pack(side="right", fill="y")
+        self.source_scroll_x.pack(side="bottom", fill="x")
+        self.source_text.pack(side="left", fill="both", expand=True)
+        self.notebook.add(self.source_tab, text="📝 Raw Source")
+
+    def refresh_devtools(self, tab: BrowserTab):
+        # 1. Update DOM Explorer
+        self.dom_text.config(state="normal")
+        self.dom_text.delete("1.0", "end")
+        if tab.dom_tree:
+            self.dom_text.insert("1.0", tab.dom_tree.dump())
+        else:
+            self.dom_text.insert("1.0", "No DOM Loaded")
+        self.dom_text.config(state="disabled")
+        
+        # 2. Update Style rules
+        self.css_text.config(state="normal")
+        self.css_text.delete("1.0", "end")
+        if tab.css_rules:
+            formatted_css = ""
+            for selector, rules in tab.css_rules:
+                formatted_css += f"{selector} {{\n"
+                for k, v in rules.items():
+                    formatted_css += f"    {k}: {v};\n"
+                formatted_css += "}\n\n"
+            self.css_text.insert("1.0", formatted_css)
+        else:
+            self.css_text.insert("1.0", "No Stylesheets found")
+        self.css_text.config(state="disabled")
+        
+        # 3. Update Raw source
+        self.source_text.config(state="normal")
+        self.source_text.delete("1.0", "end")
+        if tab.raw_html:
+            self.source_text.insert("1.0", tab.raw_html)
+        else:
+            self.source_text.insert("1.0", "Empty Document")
+        self.source_text.config(state="disabled")
+
+
+class SurfGambitApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("SurfGambit Browser")
+        self.root.geometry("1200x800")
+        
+        # Global text measurer
+        self.measurer = layout.TextMeasurer()
+        
+        # Chrome styling colors
+        self.chrome_bg = "#1e1e1e"
+        self.button_bg = "#333333"
+        self.button_fg = "#ffffff"
+        self.entry_bg = "#2b2b2b"
+        self.entry_fg = "#ffffff"
+        
+        self._setup_styles()
+        self._build_ui()
+
+    def _setup_styles(self):
+        # ttk styling overrides
+        style = ttk.Style()
+        style.theme_use("clam")
+        
+        # Dark theme config for the tabs
+        style.configure("TNotebook", background="#2d2d2d", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#3c3c3c", foreground="#ffffff", padding=[10, 4], borderwidth=0)
+        style.map("TNotebook.Tab", background=[("selected", "#1e1e1e")])
+        style.configure("TFrame", background="#1e1e1e")
+
+    def _build_ui(self):
+        # 1. Navigation Panel Frame
+        nav_frame = tk.Frame(self.root, bg=self.chrome_bg, padx=5, pady=5)
+        nav_frame.pack(side="top", fill="x")
+        
+        # Styling parameters for custom button layout
+        btn_opts = {
+            "bg": self.button_bg, "fg": self.button_fg, "activebackground": "#555555",
+            "activeforeground": "white", "bd": 0, "padx": 10, "pady": 5, "font": ("Arial", 11, "bold")
+        }
+        
+        self.back_btn = tk.Button(nav_frame, text="◀", command=self.go_back, **btn_opts)
+        self.back_btn.pack(side="left", padx=2)
+        
+        self.forward_btn = tk.Button(nav_frame, text="▶", command=self.go_forward, **btn_opts)
+        self.forward_btn.pack(side="left", padx=2)
+        
+        self.refresh_btn = tk.Button(nav_frame, text="⟳", command=self.refresh_page, **btn_opts)
+        self.refresh_btn.pack(side="left", padx=2)
+        
+        # URL input line
+        self.url_entry = tk.Entry(nav_frame, bg=self.entry_bg, fg=self.entry_fg, insertbackground="white", bd=0, font=("Arial", 12))
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=8, ipady=4)
+        self.url_entry.bind("<Return>", lambda e: self.trigger_navigation())
+        self.url_entry.bind("<FocusIn>", lambda e: self.url_entry.selection_range(0, "end"))
+        
+        self.go_btn = tk.Button(nav_frame, text="➔", command=self.trigger_navigation, **btn_opts)
+        self.go_btn.pack(side="left", padx=2)
+        
+        # Separation line
+        tk.Label(nav_frame, text=" | ", fg="#666", bg=self.chrome_bg).pack(side="left")
+        
+        # Zoom controls
+        self.zoom_out_btn = tk.Button(nav_frame, text="➖", command=self.zoom_out, **btn_opts)
+        self.zoom_out_btn.pack(side="left", padx=1)
+        
+        self.zoom_lbl = tk.Label(nav_frame, text="100%", fg="white", bg=self.chrome_bg, font=("Arial", 10))
+        self.zoom_lbl.pack(side="left", padx=4)
+        
+        self.zoom_in_btn = tk.Button(nav_frame, text="➕", command=self.zoom_in, **btn_opts)
+        self.zoom_in_btn.pack(side="left", padx=1)
+        
+        tk.Label(nav_frame, text=" | ", fg="#666", bg=self.chrome_bg).pack(side="left")
+        
+        # Developer Console Button
+        self.devtools_btn = tk.Button(nav_frame, text="🛠 DevTools", command=self.toggle_devtools, **btn_opts)
+        self.devtools_btn.pack(side="left", padx=2)
+        
+        # Add Tab control
+        self.add_tab_btn = tk.Button(nav_frame, text="➕ New Tab", command=self.new_tab, **btn_opts)
+        self.add_tab_btn.pack(side="left", padx=2)
+
+        # 2. Main horizontal paned layout (Split Browser / DevTools)
+        self.paned_window = tk.PanedWindow(self.root, orient="horizontal", bd=0, sashwidth=4, bg="#2d2d2d")
+        self.paned_window.pack(fill="both", expand=True)
+        
+        # Left pane: Tab manager notebook
+        self.notebook = ttk.Notebook(self.paned_window)
+        self.paned_window.add(self.notebook)
+        
+        # Right pane: DevTools Panel
+        self.devtools_panel = DevToolsFrame(self.paned_window)
+        self.devtools_visible = False
+        
+        # Tab notebook navigation callbacks
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # 3. Status Bar
+        self.status_bar = tk.Label(self.root, text="Done", bd=1, relief="sunken", anchor="w", bg="#151515", fg="#aaa", font=("Arial", 10), padx=4, pady=4)
+        self.status_bar.pack(side="bottom", fill="x")
+        
+        # Create initial startup tab
+        self.new_tab()
+
+    def new_tab(self):
+        tab = BrowserTab(self.notebook, self)
+        self.notebook.add(tab, text="New Tab")
+        self.notebook.select(tab)
+        return tab
+
+    def trigger_navigation(self):
+        tab = self.get_active_tab()
+        if tab:
+            url = self.url_entry.get().strip()
+            tab.navigate_to(url)
+
+    def refresh_page(self):
+        tab = self.get_active_tab()
+        if tab:
+            tab.navigate_to(tab.current_url, is_history_action=True)
+
+    def go_back(self):
+        tab = self.get_active_tab()
+        if tab and tab.back_stack:
+            prev_url = tab.back_stack.pop()
+            tab.forward_stack.append(tab.current_url)
+            tab.navigate_to(prev_url, is_history_action=True)
+
+    def go_forward(self):
+        tab = self.get_active_tab()
+        if tab and tab.forward_stack:
+            next_url = tab.forward_stack.pop()
+            tab.back_stack.append(tab.current_url)
+            tab.navigate_to(next_url, is_history_action=True)
+
+    def zoom_in(self):
+        tab = self.get_active_tab()
+        if tab and tab.zoom_level < 3.0:
+            tab.zoom_level += 0.1
+            self.zoom_lbl.config(text=f"{int(tab.zoom_level * 100)}%")
+            tab.trigger_layout()
+
+    def zoom_out(self):
+        tab = self.get_active_tab()
+        if tab and tab.zoom_level > 0.5:
+            tab.zoom_level -= 0.1
+            self.zoom_lbl.config(text=f"{int(tab.zoom_level * 100)}%")
+            tab.trigger_layout()
+
+    def toggle_devtools(self):
+        if self.devtools_visible:
+            self.paned_window.forget(self.devtools_panel)
+            self.devtools_visible = False
+            self.devtools_btn.config(bg=self.button_bg)
+        else:
+            self.paned_window.add(self.devtools_panel, width=450)
+            self.devtools_visible = True
+            self.devtools_btn.config(bg="#00adb5")
+            tab = self.get_active_tab()
+            if tab:
+                self.devtools_panel.refresh_devtools(tab)
+
+    def on_tab_changed(self, event):
+        tab = self.get_active_tab()
+        if tab:
+            self.update_ui_state(tab)
+
+    def update_ui_state(self, tab: BrowserTab):
+        # Update URL Entry box
+        self.url_entry.delete(0, "end")
+        self.url_entry.insert(0, tab.current_url)
+        
+        # Update back/forward button states
+        self.back_btn.config(state="normal" if tab.back_stack else "disabled")
+        self.forward_btn.config(state="normal" if tab.forward_stack else "disabled")
+        
+        # Update Zoom displays
+        self.zoom_lbl.config(text=f"{int(tab.zoom_level * 100)}%")
+        
+        # Update tab title header
+        current_idx = self.notebook.index("current")
+        title = tab.current_url
+        if title.startswith("http://"):
+            title = title[7:]
+        elif title.startswith("https://"):
+            title = title[8:]
+        if len(title) > 20:
+            title = title[:17] + "..."
+            
+        self.notebook.tab(current_idx, text=title)
+        
+        # Refresh Developer Console side-view
+        if self.devtools_visible:
+            self.devtools_panel.refresh_devtools(tab)
+
+    def show_loading_spinner(self, is_loading: bool):
+        if is_loading:
+            self.refresh_btn.config(text="⏳", state="disabled")
+        else:
+            self.refresh_btn.config(text="⟳", state="normal")
+
+    def get_active_tab(self) -> Optional[BrowserTab]:
+        selected = self.notebook.select()
+        if selected:
+            return self.notebook.nametowidget(selected)
+        return None
+
+    def start(self):
+        self.root.mainloop()
+
+
+def orig_escape(text: str) -> str:
+    # Basic HTML tag string sanitizer for error rendering
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = SurfGambit(root)
-    root.mainloop()
+    app = SurfGambitApp()
+    app.start()
