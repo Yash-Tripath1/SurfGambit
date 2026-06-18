@@ -71,6 +71,11 @@ WELCOME_HTML = """
     <h1>SurfGambit Browser</h1>
     <div class="psycho">Vibe-Coded &amp; Fully Capable. Built entirely from Sockets &amp; Tkinter!</div>
     
+    <div style="text-align: center; margin-top: 20px; margin-bottom: 10px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" alt="Python Logo" width="60" height="60" style="margin-right: 25px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Tcl_Logo.svg/120px-Tcl_Logo.svg.png" alt="Tcl/Tk Logo" width="90" height="55">
+    </div>
+    
     <div class="card">
         <h2>🚀 Deeply Custom Architecture</h2>
         <p>No high-level HTTP/HTML engines used. SurfGambit implements its entire network-to-pixels pipeline from scratch:</p>
@@ -79,6 +84,12 @@ WELCOME_HTML = """
             - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
             - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
         </div>
+    </div>
+    
+    <div class="card">
+        <h2>🖼 PNG/GIF Image Support</h2>
+        <p>This browser pulls actual image resources directly through raw socket streams, decodes them via standard library PhotoImage on the main loop, and reflows layouts on image dimensions detection.</p>
+        <p>Try loading any standard image-heavy page, or see the Python and Tcl/Tk PNG banners rendered right above! JPEGs fallback gracefully to text-based alt placeholders.</p>
     </div>
     
     <div class="card">
@@ -129,6 +140,10 @@ class BrowserTab(ttk.Frame):
         self.layout_tree: Optional[layout.LayoutBox] = None
         self.zoom_level: float = 1.0
         
+        # Async Images Cache & Tracking
+        self.loaded_images: Dict[str, Optional[tk.PhotoImage]] = {}
+        self.loading_images: set = set()
+        
         # Thread lock and active loading control
         self.is_loading = False
         self.loading_thread: Optional[threading.Thread] = None
@@ -167,6 +182,7 @@ class BrowserTab(ttk.Frame):
         self.dom_tree = parser.HTMLParser(self.raw_html).parse()
         self.css_rules = parser.get_style_sheets(self.dom_tree)
         parser.resolve_styles(self.dom_tree, self.css_rules)
+        self._start_image_downloads()
         self.trigger_layout()
 
     def navigate_to(self, url: str, is_history_action=False):
@@ -192,6 +208,10 @@ class BrowserTab(ttk.Frame):
         self.is_loading = True
         self.main_browser.status_bar.config(text=f"Connecting to {url}...")
         self.main_browser.show_loading_spinner(True)
+        
+        # Clear images cache for the new session
+        self.loaded_images.clear()
+        self.loading_images.clear()
         
         # Launch non-blocking request background thread
         self.loading_thread = threading.Thread(
@@ -233,6 +253,9 @@ class BrowserTab(ttk.Frame):
         self.dom_tree = dom
         self.css_rules = css
         
+        # Start async loading of image nodes
+        self._start_image_downloads()
+        
         # Render page
         self.trigger_layout()
         
@@ -269,6 +292,60 @@ class BrowserTab(ttk.Frame):
         parser.resolve_styles(self.dom_tree, self.css_rules)
         self.trigger_layout()
         self.main_browser.update_ui_state(self)
+
+    def _start_image_downloads(self):
+        self.loading_images.clear()
+        img_nodes = []
+        
+        def find_images(node):
+            if node.tag == "img":
+                img_nodes.append(node)
+            for child in node.children:
+                find_images(child)
+                
+        if self.dom_tree:
+            find_images(self.dom_tree)
+            
+        for node in img_nodes:
+            src = node.attributes.get("src")
+            if src:
+                img_url = urllib.parse.urljoin(self.current_url, src)
+                if img_url not in self.loaded_images and img_url not in self.loading_images:
+                    self.loading_images.add(img_url)
+                    threading.Thread(target=self._async_download_image, args=(img_url, node), daemon=True).start()
+
+    def _async_download_image(self, img_url: str, node: parser.HTMLNode):
+        try:
+            response = network.request(img_url)
+            self.after(0, self._on_image_download_success, img_url, response.body, node)
+        except Exception:
+            self.after(0, self._on_image_download_error, img_url)
+
+    def _on_image_download_success(self, img_url: str, img_data: bytes, node: parser.HTMLNode):
+        self.loading_images.discard(img_url)
+        try:
+            photo = tk.PhotoImage(data=img_data)
+            self.loaded_images[img_url] = photo
+            
+            # Reflow: If sizing was implicit, update using actual PhotoImage width/height
+            reflow = False
+            if "width" not in node.attributes and "width" not in node.style:
+                node.style["width"] = f"{photo.width()}px"
+                reflow = True
+            if "height" not in node.attributes and "height" not in node.style:
+                node.style["height"] = f"{photo.height()}px"
+                reflow = True
+                
+            self.trigger_layout()
+        except Exception:
+            # JPEG or parsing error - mark as None to draw alt fallback
+            self.loaded_images[img_url] = None
+            self.trigger_layout()
+
+    def _on_image_download_error(self, img_url: str):
+        self.loading_images.discard(img_url)
+        self.loaded_images[img_url] = None
+        self.trigger_layout()
 
     def trigger_layout(self):
         if not self.dom_tree:
@@ -383,6 +460,37 @@ class BrowserTab(ttk.Frame):
                             ax, ay, text=text, font=tk_font, fill=color, anchor="nw", tags=tags
                         )
                         
+                    elif itype == "img":
+                        src = node.attributes.get("src", "")
+                        alt_text = node.attributes.get("alt", "Image")
+                        resolved_url = urllib.parse.urljoin(self.current_url, src)
+                        
+                        # Render PhotoImage if successfully fetched and decoded
+                        photo = self.loaded_images.get(resolved_url)
+                        if photo:
+                            self.canvas.create_image(ax, ay, image=photo, anchor="nw")
+                        else:
+                            # Draw beautiful textured placeholder
+                            is_welcome = (self.current_url == "surfgambit://welcome")
+                            fill_c = "#2d2d2d" if is_welcome else "#f5f5f5"
+                            out_c = "#555555" if is_welcome else "#cccccc"
+                            txt_c = "#888888" if is_welcome else "#666666"
+                            
+                            self.canvas.create_rectangle(
+                                ax, ay, ax + rw, ay + rh,
+                                fill=fill_c, outline=out_c, width=1, dash=(4, 4)
+                            )
+                            # Render compact placeholder details
+                            lbl = f"📷 {alt_text}"
+                            max_chars = max(5, int(rw / 6.5))
+                            if len(lbl) > max_chars:
+                                lbl = lbl[:int(max_chars) - 3] + "..."
+                                
+                            self.canvas.create_text(
+                                ax + rw/2, ay + rh/2, text=lbl, fill=txt_c,
+                                font=("Arial", max(8, int(10 * self.zoom_level)), "normal"), anchor="center"
+                            )
+                            
                     elif itype == "hr":
                         # Render division line
                         color = style.get("color", "#ccc")
