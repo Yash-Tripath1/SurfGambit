@@ -178,9 +178,31 @@ def compute_layout(box: LayoutBox, x: int, y: int, max_width: int, measurer: Tex
     box.padding_right = parse_px_val(box.node.style.get("padding-right"), parse_px_val(box.node.style.get("padding"), 0))
 
     if box.box_type == "block":
+        # Support max-width for block styling
+        target_width = max_width - box.margin_left - box.margin_right
+        max_w_val = box.node.style.get("max-width")
+        if max_w_val:
+            limit_w = parse_px_val(max_w_val, target_width)
+            if limit_w < target_width:
+                target_width = limit_w
+
+        # Support margin: auto centering
+        margin_left_str = box.node.style.get("margin-left", "").strip().lower()
+        margin_right_str = box.node.style.get("margin-right", "").strip().lower()
+        margin_str = box.node.style.get("margin", "").strip().lower()
+        
+        is_auto_left = (margin_left_str == "auto") or ("auto" in margin_str and not margin_left_str)
+        is_auto_right = (margin_right_str == "auto") or ("auto" in margin_str and not margin_right_str)
+        
+        if is_auto_left and is_auto_right:
+            remaining_space = max_width - target_width
+            if remaining_space > 0:
+                box.margin_left = int(remaining_space / 2)
+                box.margin_right = int(remaining_space / 2)
+
         box.x = x + box.margin_left
         box.y = y + box.margin_top
-        box.width = max_width - box.margin_left - box.margin_right
+        box.width = target_width
         
         # Check if the block has block-level children
         has_block_children = any(c.box_type == "block" for c in box.children)

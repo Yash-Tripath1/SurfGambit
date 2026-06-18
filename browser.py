@@ -389,6 +389,35 @@ class BrowserTab(ttk.Frame):
                 fill=bg_color, outline=""
             )
             
+        # 1b. Render Borders (Outlines)
+        border_str = box.node.style.get("border")
+        border_w = 0
+        border_c = None
+        if border_str:
+            # Simple parser for "1px solid #333" or similar
+            parts = border_str.split()
+            for p in parts:
+                if "px" in p:
+                    try:
+                        border_w = max(1, int(float(p.replace("px", ""))))
+                    except:
+                        pass
+                elif p.startswith("#") or p.lower() in ("black", "gray", "red", "blue", "white", "darkgray", "#333", "#555", "#ccc"):
+                    border_c = p
+        else:
+            border_w_str = box.node.style.get("border-width")
+            if border_w_str:
+                border_w = layout.parse_px_val(border_w_str, 0)
+                border_c = box.node.style.get("border-color", "black")
+                
+        if border_w > 0 and border_c:
+            # Offset the rectangle slightly inward to keep it within the layout boundaries if desired,
+            # or draw it normally. Normally is perfectly fine.
+            self.canvas.create_rectangle(
+                box.x, box.y, box.x + box.width, box.y + box.height,
+                fill="", outline=border_c, width=border_w
+            )
+            
         # 2. Render list bullets for <li> elements
         if box.node.tag == "li":
             parent = box.node.parent
