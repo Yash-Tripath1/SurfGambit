@@ -278,7 +278,7 @@ def matches_selector(node: HTMLNode, selector: str) -> bool:
     return part_idx < 0
 
 DEFAULT_STYLES: Dict[str, Dict[str, str]] = {
-    "html": {"display": "block", "font-family": "sans-serif", "color": "black", "background-color": "white"},
+    "html": {"display": "block", "font-family": "sans-serif", "color": "black", "background-color": "transparent"},
     "body": {"display": "block", "margin": "12px"},
     "div": {"display": "block"},
     "p": {"display": "block", "margin-top": "12px", "margin-bottom": "12px"},

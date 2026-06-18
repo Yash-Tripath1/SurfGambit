@@ -148,6 +148,15 @@ def build_layout_tree(node: HTMLNode) -> Optional[LayoutBox]:
         if child_box:
             box.children.append(child_box)
             
+    # Anonymous Block Box simulation:
+    # If this container is a block, and has ANY block-level child, then force ALL child layout boxes 
+    # to be block-level. This prevents mixed-mode horizontal text flow overlaps (fundamental CSS rule).
+    has_block_child = any(c.box_type == "block" for c in box.children)
+    if box_type == "block" and has_block_child:
+        for child_box in box.children:
+            if child_box.box_type == "inline":
+                child_box.box_type = "block"
+            
     return box
 
 def parse_px_val(val_str: str, default: int = 0) -> int:
@@ -211,7 +220,8 @@ def compute_layout(box: LayoutBox, x: int, y: int, max_width: int, measurer: Tex
             current_y = box.y + box.padding_top
             for child in box.children:
                 compute_layout(child, box.x + box.padding_left, current_y, box.width - box.padding_left - box.padding_right, measurer)
-                current_y += child.height + child.margin_bottom
+                # Mathematical fix: update current_y using absolute child bottom + margin bottom
+                current_y = child.y + child.height + child.margin_bottom
             box.height = current_y - box.y + box.padding_bottom
         else:
             # Inline Formatting Context inside this Block

@@ -57,32 +57,25 @@ WELCOME_HTML = """
             font-size: 13px;
             line-height: 1.5;
         }
-        .psycho { 
-            font-style: italic; 
-            color: #ff5722; 
-            font-weight: bold; 
-            text-align: center; 
-            margin-top: 15px; 
-            font-size: 16px;
-        }
     </style>
 </head>
 <body>
     <h1>SurfGambit Browser</h1>
-    <div class="psycho">Vibe-Coded &amp; Fully Capable. Built entirely from Sockets &amp; Tkinter!</div>
+    <p style="color: #888; font-size: 16px; margin-top: 5px;">A custom-built Python web engine rendered on raw Canvas.</p>
     
     <div style="text-align: center; margin-top: 20px; margin-bottom: 10px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/115px-Python-logo-notext.svg.png" alt="Python Logo" width="60" height="60" style="margin-right: 25px;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/120px-Python-logo-notext.svg.png" alt="Python Logo" width="60" height="60" style="margin-right: 25px;">
         <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Tcl_Logo.svg/120px-Tcl_Logo.svg.png" alt="Tcl/Tk Logo" width="90" height="55">
     </div>
     
     <div class="card">
         <h2>🚀 Deeply Custom Architecture</h2>
-        <p>No high-level HTTP/HTML engines used. SurfGambit implements its entire network-to-pixels pipeline from scratch:</p>
+        <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
         <div class="tech-list">
-            - [network.py]: Raw TCP/IP sockets over SSL/TLS, chunked encoding, and gzip compression.<br>
-            - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
-            - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
+            - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
+            - [parser.py]: State-machine HTML compiler & CSS Selector Cascadence specificity.<br>
+            - [layout.py]: Geometry flow solvers, word wrapping, padding margins, alignment.<br>
+            - [browser.py]: Multi-threaded UI shell, Canvas viewport painter, tabs management.
         </div>
     </div>
     
@@ -106,7 +99,7 @@ WELCOME_HTML = """
 
     <div class="card">
         <h2>🔗 Standard Web Testbench</h2>
-        <p>Try entering these lightweight URLs in the address bar above:</p>
+        <p>Try entering these lightweight URLs in the address bar above, or type search terms to query Google directly:</p>
         <p>
             - <a href="http://example.com">http://example.com</a> (Standard HTTP test site)<br>
             - <a href="http://neverssl.com">http://neverssl.com</a> (Great raw no-SSL sandbox)<br>
@@ -115,8 +108,8 @@ WELCOME_HTML = """
         </p>
     </div>
     
-    <div style="color: #666; font-size: 12px; margin-top: 40px;">
-        SurfGambit v1.1 | Yash Tripathi (18, India) &amp; Arena.ai Agent
+    <div style="color: #444; font-size: 12px; margin-top: 40px;">
+        SurfGambit Client v1.2 | Standalone Sandbox Session
     </div>
 </body>
 </html>
@@ -143,6 +136,10 @@ class BrowserTab(ttk.Frame):
         # Async Images Cache & Tracking
         self.loaded_images: Dict[str, Optional[tk.PhotoImage]] = {}
         self.loading_images: set = set()
+        
+        # In-Page Search State (Ctrl+F)
+        self.search_term = ""
+        self.search_matches_count = 0
         
         # Thread lock and active loading control
         self.is_loading = False
@@ -190,9 +187,24 @@ class BrowserTab(ttk.Frame):
         if not url:
             return
             
-        # Standardize URL
-        if not (url.startswith("http://") or url.startswith("https://") or url.startswith("surfgambit://")):
-            url = "https://" + url
+        # Standardize URL or route to selected Search Engine if it's a search term!
+        is_schema = url.startswith("http://") or url.startswith("https://") or url.startswith("surfgambit://")
+        
+        if not is_schema:
+            has_dot = "." in url
+            has_space = " " in url
+            if has_dot and not has_space:
+                url = "https://" + url
+            else:
+                # Treat as search query!
+                query_encoded = urllib.parse.quote(url)
+                engine = self.main_browser.search_engine_combo.get()
+                if engine == "Google":
+                    url = f"https://www.google.com/search?q={query_encoded}&gbv=1"
+                elif engine == "Wikipedia":
+                    url = f"https://en.wikipedia.org/wiki/Special:Search?search={query_encoded}"
+                else:
+                    url = f"https://html.duckduckgo.com/html/?q={query_encoded}"
 
         if url == "surfgambit://welcome":
             if not is_history_action and self.current_url != url:
@@ -369,9 +381,33 @@ class BrowserTab(ttk.Frame):
     def render(self):
         self.canvas.delete("all")
         self.link_map.clear()
+        self.search_matches_count = 0
         
         if not self.layout_tree:
             return
+            
+        # Dynamically propagate page background color to the canvas viewport.
+        # This removes the ugly white boundaries around dark-themed web pages!
+        bg_color = "white"
+        if self.dom_tree:
+            # Check for body background color first as it typically defines page branding
+            body_bg = "transparent"
+            for child in self.dom_tree.children:
+                if child.tag == "body":
+                    body_bg = child.style.get("background-color", "transparent")
+                    break
+            
+            html_bg = self.dom_tree.style.get("background-color", "transparent")
+            
+            if body_bg and body_bg.lower() != "transparent":
+                bg_color = body_bg
+            elif html_bg and html_bg.lower() != "transparent":
+                bg_color = html_bg
+                
+        if bg_color.lower() == "transparent":
+            bg_color = "white"
+            
+        self.canvas.config(bg=bg_color)
             
         # Total heights and scrolling region bounds
         total_height = self.layout_tree.height
@@ -379,6 +415,12 @@ class BrowserTab(ttk.Frame):
         
         # Recursively render the layout blocks
         self._render_box(self.layout_tree)
+        
+        # Display search matches in the status bar
+        if self.search_term:
+            self.main_browser.status_bar.config(
+                text=f"Find: Highlighted {self.search_matches_count} occurrences of '{self.search_term}' on this page."
+            )
 
     def _render_box(self, box: layout.LayoutBox):
         # 1. Render Background Color
@@ -467,6 +509,15 @@ class BrowserTab(ttk.Frame):
                         if is_link:
                             color = style.get("color", "blue") # Fallback to standard blue for links
                         
+                        # Sanitize colors for Tkinter compatibility (bypasses CSS 'inherit', 'unset', variables)
+                        color_lower = color.lower().strip()
+                        if color_lower in ("inherit", "initial", "unset", "currentcolor", "transparent", ""):
+                            color = "white" if self.current_url == "surfgambit://welcome" else "black"
+                        elif color_lower.startswith("rgba"):
+                            color = "black" # basic solid color fallback for canvas text
+                        elif color_lower.startswith("var("):
+                            color = "black" # ignore CSS variable bindings
+                        
                         # Format text decorations
                         font_dec = ""
                         if is_link or style.get("text-decoration") == "underline":
@@ -484,6 +535,15 @@ class BrowserTab(ttk.Frame):
                             link_id = len(self.link_map) + 1
                             self.link_map[link_id] = href
                             tags = ("link", f"link_{link_id}")
+                            
+                        # IN-PAGE SEARCH HIGHLIGHTING (Ctrl+F)
+                        if self.search_term and self.search_term.lower() in text.lower():
+                            self.search_matches_count += 1
+                            self.canvas.create_rectangle(
+                                ax - 1, ay - 1, ax + rw + 1, ay + rh + 1,
+                                fill="#ffeb3b", outline="#fbc02d", width=1
+                            )
+                            color = "black" # force high contrast black text on yellow
                             
                         self.canvas.create_text(
                             ax, ay, text=text, font=tk_font, fill=color, anchor="nw", tags=tags
@@ -693,9 +753,9 @@ class SurfGambitApp:
         style.configure("TFrame", background="#1e1e1e")
 
     def _build_ui(self):
-        # 1. Navigation Panel Frame
-        nav_frame = tk.Frame(self.root, bg=self.chrome_bg, padx=5, pady=5)
-        nav_frame.pack(side="top", fill="x")
+        # 1. Primary Navigation Bar (Row 1)
+        nav_row1 = tk.Frame(self.root, bg=self.chrome_bg, padx=6, pady=4)
+        nav_row1.pack(side="top", fill="x")
         
         # Styling parameters for custom button layout
         btn_opts = {
@@ -703,48 +763,72 @@ class SurfGambitApp:
             "activeforeground": "white", "bd": 0, "padx": 10, "pady": 5, "font": ("Arial", 11, "bold")
         }
         
-        self.back_btn = tk.Button(nav_frame, text="◀", command=self.go_back, **btn_opts)
+        self.back_btn = tk.Button(nav_row1, text="◀", command=self.go_back, **btn_opts)
         self.back_btn.pack(side="left", padx=2)
         
-        self.forward_btn = tk.Button(nav_frame, text="▶", command=self.go_forward, **btn_opts)
+        self.forward_btn = tk.Button(nav_row1, text="▶", command=self.go_forward, **btn_opts)
         self.forward_btn.pack(side="left", padx=2)
         
-        self.refresh_btn = tk.Button(nav_frame, text="⟳", command=self.refresh_page, **btn_opts)
+        self.refresh_btn = tk.Button(nav_row1, text="⟳", command=self.refresh_page, **btn_opts)
         self.refresh_btn.pack(side="left", padx=2)
         
         # URL input line
-        self.url_entry = tk.Entry(nav_frame, bg=self.entry_bg, fg=self.entry_fg, insertbackground="white", bd=0, font=("Arial", 12))
+        self.url_entry = tk.Entry(nav_row1, bg=self.entry_bg, fg=self.entry_fg, insertbackground="white", bd=0, font=("Arial", 12))
         self.url_entry.pack(side="left", fill="x", expand=True, padx=8, ipady=4)
         self.url_entry.bind("<Return>", lambda e: self.trigger_navigation())
         self.url_entry.bind("<FocusIn>", lambda e: self.url_entry.selection_range(0, "end"))
         
-        self.go_btn = tk.Button(nav_frame, text="➔", command=self.trigger_navigation, **btn_opts)
+        self.go_btn = tk.Button(nav_row1, text="➔", command=self.trigger_navigation, **btn_opts)
         self.go_btn.pack(side="left", padx=2)
         
-        # Separation line
-        tk.Label(nav_frame, text=" | ", fg="#666", bg=self.chrome_bg).pack(side="left")
+        # Search Engine Dropdown
+        tk.Label(nav_row1, text="🔍:", fg="white", bg=self.chrome_bg, font=("Arial", 10)).pack(side="left", padx=2)
+        self.search_engine_combo = ttk.Combobox(nav_row1, values=["Google", "DuckDuckGo", "Wikipedia"], width=11, state="readonly")
+        self.search_engine_combo.set("DuckDuckGo")
+        self.search_engine_combo.pack(side="left", padx=4)
+        
+        # Tab Actions packed on the right of Row 1 (standard modern browser style)
+        self.add_tab_btn = tk.Button(nav_row1, text="➕ New Tab", command=self.new_tab, **btn_opts)
+        self.add_tab_btn.pack(side="right", padx=2)
+        
+        self.close_tab_btn = tk.Button(nav_row1, text="❌ Close Tab", command=self.close_current_tab, **btn_opts)
+        self.close_tab_btn.pack(side="right", padx=2)
+
+        # 2. Secondary Utility Bar (Row 2) - Slightly darker background for visual layering
+        nav_row2 = tk.Frame(self.root, bg="#151515", padx=6, pady=4)
+        nav_row2.pack(side="top", fill="x")
         
         # Zoom controls
-        self.zoom_out_btn = tk.Button(nav_frame, text="➖", command=self.zoom_out, **btn_opts)
+        tk.Label(nav_row2, text="🔍 Zoom:", fg="#aaa", bg="#151515", font=("Arial", 10)).pack(side="left", padx=4)
+        self.zoom_out_btn = tk.Button(nav_row2, text="➖", command=self.zoom_out, **{**btn_opts, "bg": "#222222", "padx": 6, "pady": 2, "font": ("Arial", 9, "bold")})
         self.zoom_out_btn.pack(side="left", padx=1)
         
-        self.zoom_lbl = tk.Label(nav_frame, text="100%", fg="white", bg=self.chrome_bg, font=("Arial", 10))
-        self.zoom_lbl.pack(side="left", padx=4)
+        self.zoom_lbl = tk.Label(nav_row2, text="100%", fg="white", bg="#151515", font=("Arial", 10, "bold"))
+        self.zoom_lbl.pack(side="left", padx=6)
         
-        self.zoom_in_btn = tk.Button(nav_frame, text="➕", command=self.zoom_in, **btn_opts)
+        self.zoom_in_btn = tk.Button(nav_row2, text="➕", command=self.zoom_in, **{**btn_opts, "bg": "#222222", "padx": 6, "pady": 2, "font": ("Arial", 9, "bold")})
         self.zoom_in_btn.pack(side="left", padx=1)
         
-        tk.Label(nav_frame, text=" | ", fg="#666", bg=self.chrome_bg).pack(side="left")
+        # Separator
+        tk.Label(nav_row2, text=" | ", fg="#444", bg="#151515").pack(side="left", padx=6)
         
-        # Developer Console Button
-        self.devtools_btn = tk.Button(nav_frame, text="🛠 DevTools", command=self.toggle_devtools, **btn_opts)
-        self.devtools_btn.pack(side="left", padx=2)
+        # In-Page Search Panel
+        tk.Label(nav_row2, text="📄 Find on Page:", fg="#aaa", bg="#151515", font=("Arial", 10)).pack(side="left", padx=2)
+        self.search_entry = tk.Entry(nav_row2, bg=self.entry_bg, fg=self.entry_fg, insertbackground="white", bd=0, font=("Arial", 11), width=18)
+        self.search_entry.pack(side="left", padx=4, ipady=2)
+        self.search_entry.bind("<Return>", lambda e: self.trigger_search())
         
-        # Add Tab control
-        self.add_tab_btn = tk.Button(nav_frame, text="➕ New Tab", command=self.new_tab, **btn_opts)
-        self.add_tab_btn.pack(side="left", padx=2)
+        self.find_btn = tk.Button(nav_row2, text="Find", command=self.trigger_search, **{**btn_opts, "bg": "#2d2d2d", "padx": 10, "pady": 2, "font": ("Arial", 9, "bold")})
+        self.find_btn.pack(side="left", padx=2)
+        
+        self.clear_btn = tk.Button(nav_row2, text="Clear", command=self.clear_search, **{**btn_opts, "bg": "#2d2d2d", "padx": 10, "pady": 2, "font": ("Arial", 9, "bold")})
+        self.clear_btn.pack(side="left", padx=2)
+        
+        # Developer Console Button (packed on the right of Row 2)
+        self.devtools_btn = tk.Button(nav_row2, text="🛠 DevTools Console", command=self.toggle_devtools, **{**btn_opts, "bg": "#2d2d2d", "padx": 12, "pady": 2, "font": ("Arial", 10, "bold")})
+        self.devtools_btn.pack(side="right", padx=4)
 
-        # 2. Main horizontal paned layout (Split Browser / DevTools)
+        # 3. Main horizontal paned layout (Split Browser / DevTools)
         self.paned_window = tk.PanedWindow(self.root, orient="horizontal", bd=0, sashwidth=4, bg="#2d2d2d")
         self.paned_window.pack(fill="both", expand=True)
         
@@ -765,12 +849,39 @@ class SurfGambitApp:
         
         # Create initial startup tab
         self.new_tab()
+        
+        # Bind Ctrl+F for quick search focus
+        self.root.bind("<Control-f>", lambda e: self.search_entry.focus_set())
+        self.root.bind("<Control-F>", lambda e: self.search_entry.focus_set())
 
     def new_tab(self):
         tab = BrowserTab(self.notebook, self)
         self.notebook.add(tab, text="New Tab")
         self.notebook.select(tab)
         return tab
+
+    def close_current_tab(self):
+        # Allow closing tabs if we have more than one tab open
+        if self.notebook.index("end") > 1:
+            current_idx = self.notebook.index("current")
+            self.notebook.forget(current_idx)
+        else:
+            self.status_bar.config(text="Cannot close the last remaining tab!")
+
+    def trigger_search(self):
+        tab = self.get_active_tab()
+        if tab:
+            term = self.search_entry.get().strip()
+            tab.search_term = term
+            tab.render()
+
+    def clear_search(self):
+        self.search_entry.delete(0, "end")
+        tab = self.get_active_tab()
+        if tab:
+            tab.search_term = ""
+            tab.render()
+            self.status_bar.config(text="Done")
 
     def trigger_navigation(self):
         tab = self.get_active_tab()
