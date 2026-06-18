@@ -851,4 +851,4 @@ def orig_escape(text: str) -> str:
 
 if __name__ == "__main__":
     app = SurfGambitApp()
-    app.start(
+    app.start()
