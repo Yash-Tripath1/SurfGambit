@@ -425,6 +425,8 @@ class BrowserTab(ttk.Frame):
             self.after(0, self._on_load_error, url, str(e))
 
     def _on_load_success(self, orig_url: str, resolved_url: str, html_text: str, dom: parser.HTMLNode, css: list, is_history_action: bool):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
         self.is_loading = False
         self.main_browser.show_loading_spinner(False)
         
@@ -459,6 +461,8 @@ class BrowserTab(ttk.Frame):
         self.main_browser.update_ui_state(self)
 
     def _on_load_error(self, url: str, err_msg: str):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
         self.is_loading = False
         self.main_browser.show_loading_spinner(False)
         self.main_browser.status_bar.config(text=f"Failed to load: {err_msg}")
@@ -518,6 +522,8 @@ class BrowserTab(ttk.Frame):
             self.after(0, self._on_image_download_error, img_url)
 
     def _on_image_download_success(self, img_url: str, img_data: bytes, node: parser.HTMLNode):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
         self.loading_images.discard(img_url)
         try:
             photo = tk.PhotoImage(data=img_data)
@@ -539,6 +545,8 @@ class BrowserTab(ttk.Frame):
             self.trigger_layout()
 
     def _on_image_download_error(self, img_url: str):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
         self.loading_images.discard(img_url)
         self.loaded_images[img_url] = None
         self.trigger_layout()
@@ -1457,6 +1465,8 @@ class SurfGambitApp:
             self.devtools_panel.refresh_devtools(tab)
 
     def show_loading_spinner(self, is_loading: bool):
+        if not self.root.winfo_exists():
+            return
         if is_loading:
             self.refresh_btn.config(text="⏳", state="disabled")
         else:

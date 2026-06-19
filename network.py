@@ -41,10 +41,10 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
         host = parsed.hostname
         port = parsed.port
         path = parsed.path
+        if not path.startswith("/"):
+            path = "/" + path
         if parsed.query:
             path += "?" + parsed.query
-        if not path:
-            path = "/"
 
         if not host:
             raise ValueError(f"Invalid host in URL: {current_url}")
