@@ -141,6 +141,10 @@ class BrowserTab(ttk.Frame):
         self.search_term = ""
         self.search_matches_count = 0
         
+        # Live Forms and Widgets Tracking
+        self.canvas_widgets: List[tk.Widget] = []
+        self.form_entries: Dict[parser.HTMLNode, tk.Entry] = {}
+        
         # Thread lock and active loading control
         self.is_loading = False
         self.loading_thread: Optional[threading.Thread] = None
@@ -383,6 +387,15 @@ class BrowserTab(ttk.Frame):
         self.link_map.clear()
         self.search_matches_count = 0
         
+        # Destroy and clear live form inputs from previous render
+        for widget in getattr(self, "canvas_widgets", []):
+            try:
+                widget.destroy()
+            except Exception:
+                pass
+        self.canvas_widgets = []
+        self.form_entries = {}
+        
         if not self.layout_tree:
             return
             
@@ -580,6 +593,58 @@ class BrowserTab(ttk.Frame):
                                 font=("Arial", max(8, int(10 * self.zoom_level)), "normal"), anchor="center"
                             )
                             
+                    elif itype == "widget":
+                        tag = node.tag
+                        val = node.attributes.get("value", "")
+                        placeholder = node.attributes.get("placeholder", "")
+                        inp_type = node.attributes.get("type", "text").lower()
+                        
+                        if tag == "input" and inp_type == "submit":
+                            btn_text = val or "Submit"
+                            btn = tk.Button(
+                                self.canvas, text=btn_text, bg="#e1e1e1", fg="black",
+                                activebackground="#cccccc", bd=1, relief="raised",
+                                cursor="hand2", font=("Arial", max(8, int(9 * self.zoom_level)), "bold"),
+                                command=lambda n=node: self._submit_form(n)
+                            )
+                            self.canvas_widgets.append(btn)
+                            self.canvas.create_window(ax, ay, window=btn, width=rw, height=rh, anchor="nw")
+                            
+                        elif tag == "button":
+                            btn_text = ""
+                            if node.children:
+                                btn_text = "".join(c.text for c in node.children if c.is_text())
+                            if not btn_text:
+                                btn_text = "Submit"
+                            btn = tk.Button(
+                                self.canvas, text=btn_text, bg="#e1e1e1", fg="black",
+                                activebackground="#cccccc", bd=1, relief="raised",
+                                cursor="hand2", font=("Arial", max(8, int(9 * self.zoom_level)), "bold"),
+                                command=lambda n=node: self._submit_form(n)
+                            )
+                            self.canvas_widgets.append(btn)
+                            self.canvas.create_window(ax, ay, window=btn, width=rw, height=rh, anchor="nw")
+                            
+                        elif tag == "input" and inp_type in ("text", "search", "password", "email", "url"):
+                            show_char = "*" if inp_type == "password" else ""
+                            entry = tk.Entry(
+                                self.canvas, bg="white", fg="black", insertbackground="black",
+                                bd=1, relief="solid", font=("Arial", max(8, int(10 * self.zoom_level))),
+                                show=show_char
+                            )
+                            if val:
+                                entry.insert(0, val)
+                            elif placeholder:
+                                # We can set grey background placeholder but leaving it clear keeps it fast/simple
+                                pass
+                                
+                            self.canvas_widgets.append(entry)
+                            self.form_entries[node] = entry
+                            
+                            # Bind pressing Enter key inside Entry to submit form!
+                            entry.bind("<Return>", lambda e, n=node: self._submit_form(n))
+                            self.canvas.create_window(ax, ay, window=entry, width=rw, height=rh, anchor="nw")
+                            
                     elif itype == "hr":
                         # Render division line
                         color = style.get("color", "#ccc")
@@ -642,6 +707,67 @@ class BrowserTab(ttk.Frame):
                 self.navigate_to(target_url)
             except ValueError:
                 pass
+
+    def _submit_form(self, trigger_node: parser.HTMLNode):
+        # 1. Walk up to find enclosing <form>
+        form_node = None
+        curr = trigger_node
+        while curr:
+            if curr.tag == "form":
+                form_node = curr
+                break
+            curr = curr.parent
+            
+        if not form_node:
+            return
+            
+        # 2. Extract action and method
+        action = form_node.attributes.get("action", "")
+        method = form_node.attributes.get("method", "GET").upper()
+        
+        # 3. Recursively find all inputs inside this form
+        form_inputs = []
+        def find_inputs(node):
+            if node.tag in ("input", "textarea", "select"):
+                form_inputs.append(node)
+            for child in node.children:
+                find_inputs(child)
+        find_inputs(form_node)
+        
+        # 4. Extract values from live Entries
+        params = {}
+        for inp in form_inputs:
+            name = inp.attributes.get("name")
+            if not name:
+                continue
+                
+            inp_type = inp.attributes.get("type", "text").lower()
+            if inp_type == "submit":
+                continue
+                
+            val = ""
+            if inp in self.form_entries:
+                val = self.form_entries[inp].get()
+            else:
+                val = inp.attributes.get("value", "")
+                
+            params[name] = val
+            
+        # 5. Form query string
+        query_string = urllib.parse.urlencode(params)
+        
+        # 6. Resolve target URL
+        target_url = urllib.parse.urljoin(self.current_url, action)
+        
+        # 7. Format parameters based on GET/POST
+        if query_string:
+            if "?" in target_url:
+                target_url += "&" + query_string
+            else:
+                target_url += "?" + query_string
+                
+        # 8. Trigger navigation
+        self.navigate_to(target_url)
 
 
 class DevToolsFrame(ttk.Frame):

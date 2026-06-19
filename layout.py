@@ -258,6 +258,9 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
             h = parse_px_val(h_val, 80)
             items.append(("img", b.node, b.node.style, f"{w},{h}"))
             return
+        if b.node.tag in ("input", "button", "textarea"):
+            items.append(("widget", b.node, b.node.style, ""))
+            return
         if b.node.is_text():
             text = b.node.text
             # Standard HTML: collapse all whitespaces to single spaces
@@ -341,6 +344,34 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
                 
             max_line_height = max(max_line_height, scaled_h)
             current_line.append(("img", node, style, text, cx, cy, scaled_w, scaled_h))
+            cx += scaled_w
+            continue
+
+        if item_type == "widget":
+            tag = node.tag
+            # Default sizes
+            w, h = 150, 24
+            if tag == "button" or node.attributes.get("type") == "submit":
+                w, h = 80, 24
+                
+            w_val = style.get("width", node.attributes.get("width"))
+            h_val = style.get("height", node.attributes.get("height"))
+            w = parse_px_val(w_val, w)
+            h = parse_px_val(h_val, h)
+            
+            scaled_w = int(w * measurer.zoom)
+            scaled_h = int(h * measurer.zoom)
+            
+            if cx + scaled_w > available_width and cx > 0:
+                lines.append((current_line, max_line_height))
+                current_line = []
+                cy += max_line_height + line_spacing
+                cx = 0
+                max_line_height = 0
+                
+            max_line_height = max(max_line_height, scaled_h)
+            # pack width and height as text 'w,h' for convenience
+            current_line.append(("widget", node, style, f"{scaled_w},{scaled_h}", cx, cy, scaled_w, scaled_h))
             cx += scaled_w
             continue
 
