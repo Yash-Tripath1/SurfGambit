@@ -1077,6 +1077,11 @@ class RetroAlienInvader(tk.Canvas):
         self.animate()
 
     def animate(self):
+        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
+        # This prevents "invalid command name" after-script crashes when navigating.
+        if not self.winfo_exists():
+            return
+            
         self.delete("all")
         frame = self.frames[self.current_frame]
         pixel_size = self.size / 8
