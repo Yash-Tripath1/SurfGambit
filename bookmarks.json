@@ -1,0 +1,30 @@
+{
+    "bookmarks": [
+        {
+            "title": "https://html.duckduckgo.com/html/?q=duck",
+            "url": "https://html.duckduckgo.com/html/?q=duck"
+        }
+    ],
+    "history": [
+        {
+            "url": "https://html.duckduckgo.com/html/?q=duck",
+            "time": "2026-06-20 00:30:15"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=duck&kl=&df=",
+            "time": "2026-06-20 00:30:12"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=duck",
+            "time": "2026-06-20 00:30:00"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=meow",
+            "time": "2026-06-20 00:25:58"
+        },
+        {
+            "url": "https://news.ycombinator.com",
+            "time": "2026-06-20 00:25:35"
+        }
+    ]
+}

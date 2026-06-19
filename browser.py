@@ -2,11 +2,32 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import urllib.parse
+import json
+import os
+import time
 from typing import Dict, List, Tuple, Optional
 
 import network
 import parser
 import layout
+
+HUB_FILE = "bookmarks.json"
+
+def load_hub_data() -> Dict[str, List[Dict[str, str]]]:
+    if not os.path.exists(HUB_FILE):
+        return {"bookmarks": [], "history": []}
+    try:
+        with open(HUB_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"bookmarks": [], "history": []}
+
+def save_hub_data(data: Dict[str, List[Dict[str, str]]]):
+    try:
+        with open(HUB_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
 
 WELCOME_HTML = """
 <html>
@@ -64,10 +85,14 @@ WELCOME_HTML = """
     <p style="color: #888; font-size: 16px; margin-top: 5px;">A custom-built Python web engine rendered on raw Canvas.</p>
     
     <div style="text-align: center; margin-top: 20px; margin-bottom: 10px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/120px-Python-logo-notext.svg.png" alt="Python Logo" width="60" height="60" style="margin-right: 25px;">
-        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Tcl_Logo.svg/120px-Tcl_Logo.svg.png" alt="Tcl/Tk Logo" width="90" height="55">
+        <alien></alien>
     </div>
     
+    <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
+        <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
+        <a href="surfgambit://history" style="font-weight: bold;">📜 History Log</a>
+    </div>
+
     <div class="card">
         <h2>🚀 Deeply Custom Architecture</h2>
         <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
@@ -82,7 +107,7 @@ WELCOME_HTML = """
     <div class="card">
         <h2>🖼 PNG/GIF Image Support</h2>
         <p>This browser pulls actual image resources directly through raw socket streams, decodes them via standard library PhotoImage on the main loop, and reflows layouts on image dimensions detection.</p>
-        <p>Try loading any standard image-heavy page, or see the Python and Tcl/Tk PNG banners rendered right above! JPEGs fallback gracefully to text-based alt placeholders.</p>
+        <p>Try loading any standard image-heavy page. JPEGs fallback gracefully to text-based alt placeholders.</p>
     </div>
     
     <div class="card">
@@ -99,7 +124,7 @@ WELCOME_HTML = """
 
     <div class="card">
         <h2>🔗 Standard Web Testbench</h2>
-        <p>Try entering these lightweight URLs in the address bar above, or type search terms to query Google directly:</p>
+        <p>Try entering these lightweight URLs in the address bar above, or type search terms to query DuckDuckGo directly:</p>
         <p>
             - <a href="http://example.com">http://example.com</a> (Standard HTTP test site)<br>
             - <a href="http://neverssl.com">http://neverssl.com</a> (Great raw no-SSL sandbox)<br>
@@ -170,6 +195,24 @@ class BrowserTab(ttk.Frame):
         self.canvas.tag_bind("link", "<Leave>", self.on_link_leave)
         self.canvas.tag_bind("link", "<Button-1>", self.on_link_click)
         
+        # Drag Text Selection State & Bindings
+        self.select_start_x = None
+        self.select_start_y = None
+        self.select_end_x = None
+        self.select_end_y = None
+        self.selected_text_content = ""
+        
+        self.canvas.bind("<ButtonPress-1>", self.on_select_start)
+        self.canvas.bind("<B1-Motion>", self.on_select_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_select_end)
+        
+        # Right-Click Context Copy Menu
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="📋 Copy Selection", command=self.copy_selection)
+        
+        self.canvas.bind("<Button-3>", self.show_context_menu)
+        self.canvas.bind("<Button-2>", self.show_context_menu)
+        
         # Resize detection
         self.canvas.bind("<Configure>", self.on_resize)
         self.last_width = 0
@@ -210,6 +253,137 @@ class BrowserTab(ttk.Frame):
                 else:
                     url = f"https://html.duckduckgo.com/html/?q={query_encoded}"
 
+        # Handle Internal Command Actions
+        if url == "surfgambit://clear-history":
+            hub = load_hub_data()
+            hub["history"] = []
+            save_hub_data(hub)
+            self.navigate_to("surfgambit://history", is_history_action=True)
+            return
+
+        if url == "surfgambit://clear-bookmarks":
+            hub = load_hub_data()
+            hub["bookmarks"] = []
+            save_hub_data(hub)
+            self.navigate_to("surfgambit://bookmarks", is_history_action=True)
+            return
+
+        # Render Bookmarks Hub
+        if url == "surfgambit://bookmarks":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.current_url = url
+            
+            hub = load_hub_data()
+            bookmark_items_html = ""
+            if hub["bookmarks"]:
+                for bm in hub["bookmarks"]:
+                    title = bm.get("title", bm["url"])
+                    b_url = bm["url"]
+                    bookmark_items_html += f"""
+                    <div class="item">
+                        <a href="{b_url}">{title}</a><br>
+                        <span class="url">{b_url}</span>
+                    </div>
+                    """
+            else:
+                bookmark_items_html = "<p style='color: #888;'>No bookmarks saved yet. Click the ⭐ button on any page to add one!</p>"
+                
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; }}
+                    .item {{ margin-bottom: 15px; border-bottom: 1px solid #222; padding-bottom: 10px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .url {{ color: #888; font-size: 12px; font-family: monospace; }}
+                    .nav {{ margin-bottom: 25px; }}
+                    .clear-btn {{ color: #ff5722; font-weight: bold; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Bookmarks</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a>
+                </div>
+                <div class="card">
+                    <h2>⭐ Saved Bookmarks</h2>
+                    {bookmark_items_html}
+                    <br>
+                    <a href="surfgambit://clear-bookmarks" class="clear-btn">❌ Clear All Bookmarks</a>
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
+            return
+
+        # Render History Hub
+        if url == "surfgambit://history":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.current_url = url
+            
+            hub = load_hub_data()
+            history_items_html = ""
+            if hub["history"]:
+                for h in hub["history"]:
+                    h_url = h["url"]
+                    timestamp = h.get("time", "")
+                    history_items_html += f"""
+                    <div class="item">
+                        <span style="color: #666; font-size: 12px;">[{timestamp}]</span> <a href="{h_url}">{h_url}</a>
+                    </div>
+                    """
+            else:
+                history_items_html = "<p style='color: #888;'>No visited pages recorded yet.</p>"
+                
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; }}
+                    .item {{ margin-bottom: 12px; font-size: 14px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .nav {{ margin-bottom: 25px; }}
+                    .clear-btn {{ color: #ff5722; font-weight: bold; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Navigation Logs</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a>
+                </div>
+                <div class="card">
+                    <h2>📜 Browsing History</h2>
+                    {history_items_html}
+                    <br>
+                    <a href="surfgambit://clear-history" class="clear-btn">❌ Clear History Logs</a>
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
+            return
+
         if url == "surfgambit://welcome":
             if not is_history_action and self.current_url != url:
                 self.back_stack.append(self.current_url)
@@ -224,10 +398,6 @@ class BrowserTab(ttk.Frame):
         self.is_loading = True
         self.main_browser.status_bar.config(text=f"Connecting to {url}...")
         self.main_browser.show_loading_spinner(True)
-        
-        # Clear images cache for the new session
-        self.loaded_images.clear()
-        self.loading_images.clear()
         
         # Launch non-blocking request background thread
         self.loading_thread = threading.Thread(
@@ -268,6 +438,16 @@ class BrowserTab(ttk.Frame):
         self.raw_html = html_text
         self.dom_tree = dom
         self.css_rules = css
+        
+        # Save to local history log (excluding internal URLs)
+        if not resolved_url.startswith("surfgambit://"):
+            hub = load_hub_data()
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            # Avoid duplicate consecutive logs
+            if not hub["history"] or hub["history"][0]["url"] != resolved_url:
+                hub["history"].insert(0, {"url": resolved_url, "time": timestamp})
+                hub["history"] = hub["history"][:100] # limit size
+                save_hub_data(hub)
         
         # Start async loading of image nodes
         self._start_image_downloads()
@@ -525,7 +705,7 @@ class BrowserTab(ttk.Frame):
                         # Sanitize colors for Tkinter compatibility (bypasses CSS 'inherit', 'unset', variables)
                         color_lower = color.lower().strip()
                         if color_lower in ("inherit", "initial", "unset", "currentcolor", "transparent", ""):
-                            color = "white" if self.current_url == "surfgambit://welcome" else "black"
+                            color = "white" if self.current_url.startswith("surfgambit://welcome") else "black"
                         elif color_lower.startswith("rgba"):
                             color = "black" # basic solid color fallback for canvas text
                         elif color_lower.startswith("var("):
@@ -573,7 +753,7 @@ class BrowserTab(ttk.Frame):
                             self.canvas.create_image(ax, ay, image=photo, anchor="nw")
                         else:
                             # Draw beautiful textured placeholder
-                            is_welcome = (self.current_url == "surfgambit://welcome")
+                            is_welcome = self.current_url.startswith("surfgambit://")
                             fill_c = "#2d2d2d" if is_welcome else "#f5f5f5"
                             out_c = "#555555" if is_welcome else "#cccccc"
                             txt_c = "#888888" if is_welcome else "#666666"
@@ -599,7 +779,13 @@ class BrowserTab(ttk.Frame):
                         placeholder = node.attributes.get("placeholder", "")
                         inp_type = node.attributes.get("type", "text").lower()
                         
-                        if tag == "input" and inp_type == "submit":
+                        if tag == "alien":
+                            # Mount larger 64x64 central dancing alien mascot on welcome page!
+                            alien = RetroAlienInvader(self.canvas, size=64, color="#00adb5", bg="#1e1e1e", main_app=self.main_browser)
+                            self.canvas_widgets.append(alien)
+                            self.canvas.create_window(ax, ay, window=alien, width=64, height=64, anchor="nw")
+                            
+                        elif tag == "input" and inp_type == "submit":
                             btn_text = val or "Submit"
                             btn = tk.Button(
                                 self.canvas, text=btn_text, bg="#e1e1e1", fg="black",
@@ -635,7 +821,6 @@ class BrowserTab(ttk.Frame):
                             if val:
                                 entry.insert(0, val)
                             elif placeholder:
-                                # We can set grey background placeholder but leaving it clear keeps it fast/simple
                                 pass
                                 
                             self.canvas_widgets.append(entry)
@@ -668,6 +853,66 @@ class BrowserTab(ttk.Frame):
             self.canvas.yview_scroll(1, "units")
         elif event.num == 4 or event.delta > 0:
             self.canvas.yview_scroll(-1, "units")
+
+    def on_select_start(self, event):
+        self.select_start_x = self.canvas.canvasx(event.x)
+        self.select_start_y = self.canvas.canvasy(event.y)
+        self.canvas.delete("selection")
+        self.selected_text_content = ""
+
+    def on_select_drag(self, event):
+        self.select_end_x = self.canvas.canvasx(event.x)
+        self.select_end_y = self.canvas.canvasy(event.y)
+        self.canvas.delete("selection")
+        self.canvas.create_rectangle(
+            self.select_start_x, self.select_start_y,
+            self.select_end_x, self.select_end_y,
+            fill="", outline="#00adb5", width=2, dash=(2, 2), tags="selection"
+        )
+
+    def on_select_end(self, event):
+        if self.select_start_x is None or self.select_end_x is None:
+            return
+        x1, x2 = min(self.select_start_x, self.select_end_x), max(self.select_start_x, self.select_end_x)
+        y1, y2 = min(self.select_start_y, self.select_end_y), max(self.select_start_y, self.select_end_y)
+        
+        if (x2 - x1) < 5 and (y2 - y1) < 5:
+            self.canvas.delete("selection")
+            return
+            
+        words_found = []
+        def collect_text(box):
+            if box.lines:
+                for line, line_h in box.lines:
+                    for item in line:
+                        itype, node, style, text, rx, ry, rw, rh = item
+                        if itype == "word":
+                            ax = box.x + rx + box.padding_left
+                            ay = box.y + ry + box.padding_top
+                            cx = ax + rw/2
+                            cy = ay + rh/2
+                            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                                words_found.append((ay, ax, text))
+            for child in box.children:
+                collect_text(child)
+                
+        if self.layout_tree:
+            collect_text(self.layout_tree)
+            
+        words_found.sort(key=lambda w: (w[0], w[1]))
+        self.selected_text_content = " ".join(w[2] for w in words_found)
+        
+        if self.selected_text_content.strip():
+            self.main_browser.status_bar.config(text=f"Selected: {len(self.selected_text_content)} chars. Right-click to Copy.")
+
+    def show_context_menu(self, event):
+        self.context_menu.post(event.x_root, event.y_root)
+
+    def copy_selection(self):
+        if self.selected_text_content.strip():
+            self.clipboard_clear()
+            self.clipboard_append(self.selected_text_content)
+            self.main_browser.status_bar.config(text="Selection copied to clipboard!")
 
     def on_resize(self, event):
         # Trigger layout on width resizing boundaries
@@ -768,6 +1013,93 @@ class BrowserTab(ttk.Frame):
                 
         # 8. Trigger navigation
         self.navigate_to(target_url)
+
+
+class RetroAlienInvader(tk.Canvas):
+    def __init__(self, parent, size=24, color="#00adb5", bg="#151515", main_app=None):
+        super().__init__(parent, width=size, height=size, bg=bg, highlightthickness=0)
+        self.size = size
+        self.color = color
+        self.bg = bg
+        self.main_app = main_app
+        
+        self.frames = [
+            # Frame 1: Standard space invader (standing)
+            [
+                "  X  X  ",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "X      X"
+            ],
+            # Frame 2: Legs closed
+            [
+                "  X  X  ",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                " XXXXXX ",
+                "X      X",
+                " X    X "
+            ],
+            # Frame 3: Arms raised
+            [
+                "X X  X X",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "X      X"
+            ],
+            # Frame 4: Squished cheeks dancing!
+            [
+                "  X  X  ",
+                "X XXXXXX",
+                "XXXXXXXX",
+                "X XXXX X",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "  X  X  "
+            ]
+        ]
+        self.current_frame = 0
+        
+        self.bind("<Enter>", self.on_hover_enter)
+        self.bind("<Leave>", self.on_hover_leave)
+        
+        self.animate()
+
+    def animate(self):
+        self.delete("all")
+        frame = self.frames[self.current_frame]
+        pixel_size = self.size / 8
+        
+        for r, row in enumerate(frame):
+            for c, char in enumerate(row):
+                if char == "X":
+                    x1 = c * pixel_size
+                    y1 = r * pixel_size
+                    x2 = x1 + pixel_size
+                    y2 = y1 + pixel_size
+                    self.create_rectangle(x1, y1, x2, y2, fill=self.color, outline="")
+                    
+        self.current_frame = (self.current_frame + 1) % len(self.frames)
+        self.after(250, self.animate) # slightly faster dance speed!
+
+    def on_hover_enter(self, event):
+        if self.main_app:
+            self.main_app.status_bar.config(text="👾: we wa wu!")
+
+    def on_hover_leave(self, event):
+        if self.main_app:
+            self.main_app.status_bar.config(text="Done")
 
 
 class DevToolsFrame(ttk.Frame):
@@ -907,6 +1239,10 @@ class SurfGambitApp:
         self.go_btn = tk.Button(nav_row1, text="➔", command=self.trigger_navigation, **btn_opts)
         self.go_btn.pack(side="left", padx=2)
         
+        # Bookmark Quick-Save Button
+        self.bookmark_btn = tk.Button(nav_row1, text="⭐", command=self.add_bookmark, **{**btn_opts, "padx": 8})
+        self.bookmark_btn.pack(side="left", padx=2)
+        
         # Search Engine Dropdown
         tk.Label(nav_row1, text="🔍:", fg="white", bg=self.chrome_bg, font=("Arial", 10)).pack(side="left", padx=2)
         self.search_engine_combo = ttk.Combobox(nav_row1, values=["Google", "DuckDuckGo", "Wikipedia"], width=11, state="readonly")
@@ -923,6 +1259,10 @@ class SurfGambitApp:
         # 2. Secondary Utility Bar (Row 2) - Slightly darker background for visual layering
         nav_row2 = tk.Frame(self.root, bg="#151515", padx=6, pady=4)
         nav_row2.pack(side="top", fill="x")
+        
+        # Retro Pixel Alien Invader (Pulsing Mascot)
+        self.alien = RetroAlienInvader(nav_row2, size=24, color="#00adb5", bg="#151515", main_app=self)
+        self.alien.pack(side="left", padx=8)
         
         # Zoom controls
         tk.Label(nav_row2, text="🔍 Zoom:", fg="#aaa", bg="#151515", font=("Arial", 10)).pack(side="left", padx=4)
@@ -993,6 +1333,23 @@ class SurfGambitApp:
             self.notebook.forget(current_idx)
         else:
             self.status_bar.config(text="Cannot close the last remaining tab!")
+
+    def add_bookmark(self):
+        tab = self.get_active_tab()
+        if tab:
+            url = tab.current_url
+            if url.startswith("surfgambit://"):
+                self.status_bar.config(text="Cannot bookmark internal browser pages!")
+                return
+            hub = load_hub_data()
+            # Prevent duplicates
+            if any(bm["url"] == url for bm in hub["bookmarks"]):
+                self.status_bar.config(text="Page already bookmarked!")
+                return
+                
+            hub["bookmarks"].append({"title": url, "url": url})
+            save_hub_data(hub)
+            self.status_bar.config(text="Page bookmarked successfully! ⭐")
 
     def trigger_search(self):
         tab = self.get_active_tab()

@@ -258,7 +258,7 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
             h = parse_px_val(h_val, 80)
             items.append(("img", b.node, b.node.style, f"{w},{h}"))
             return
-        if b.node.tag in ("input", "button", "textarea"):
+        if b.node.tag in ("input", "button", "textarea", "alien"):
             items.append(("widget", b.node, b.node.style, ""))
             return
         if b.node.is_text():
