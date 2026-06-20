@@ -251,9 +251,9 @@ class RetroAlienInvader(tk.Canvas):
             self.main_app.status_bar.config(text="Done")
 
 
-class BrowserTab(ttk.Frame):
+class BrowserTab(tk.Frame):
     def __init__(self, parent: tk.Frame, main_browser: 'SurfGambitApp'):
-        super().__init__(parent)
+        super().__init__(parent, bg="#121212")
         self.parent = parent
         self.main_browser = main_browser
         
@@ -828,7 +828,7 @@ class BrowserTab(ttk.Frame):
             
         # Dynamically propagate page background color to the canvas viewport.
         # This removes the ugly white boundaries around dark-themed web pages!
-        bg_color = "white"
+        bg_color = "white" if not self.main_browser.dark_mode else "#121212"
         if self.dom_tree:
             # Check for body background color first as it typically defines page branding
             body_bg = "transparent"
@@ -845,7 +845,7 @@ class BrowserTab(ttk.Frame):
                 bg_color = html_bg
                 
         if bg_color.lower() == "transparent":
-            bg_color = "white"
+            bg_color = "white" if not self.main_browser.dark_mode else "#121212"
             
         self.canvas.config(bg=bg_color)
             
@@ -987,7 +987,9 @@ class BrowserTab(ttk.Frame):
                         # Sanitize colors for Tkinter compatibility (bypasses CSS 'inherit', 'unset', variables)
                         color_lower = color.lower().strip()
                         if color_lower in ("inherit", "initial", "unset", "currentcolor", "transparent", ""):
-                            color = "white" if self.current_url.startswith("surfgambit://") else "black"
+                            # Smart contrast: if the canvas background is dark, use white. Otherwise, black!
+                            is_bg_dark = (self.canvas["bg"].lower() in ("#121212", "#1e1e1e", "#151515", "black", "#2d2d2d", "#1a1a1a"))
+                            color = "white" if is_bg_dark else "black"
                         elif color_lower.startswith("rgba"):
                             color = "black" # basic solid color fallback for canvas text
                         elif color_lower.startswith("var("):
@@ -1395,6 +1397,7 @@ class SurfGambitApp:
         # Chrome Custom Tab Bar State
         self.tabs: List[BrowserTab] = []
         self.active_tab_idx: int = -1
+        self.dark_mode = True
         
         self._build_ui()
 
@@ -1489,13 +1492,17 @@ class SurfGambitApp:
         # Developer Console Button (packed on the right of Row 3)
         self.devtools_btn = tk.Button(nav_row2, text="🛠 DevTools Console", command=self.toggle_devtools, **{**btn_opts, "bg": "#2d2d2d", "padx": 12, "pady": 2, "font": ("Arial", 10, "bold")})
         self.devtools_btn.pack(side="right", padx=4)
+        
+        # Theme Toggle Button
+        self.theme_btn = tk.Button(nav_row2, text="☯ Theme", command=self.toggle_theme, **{**btn_opts, "bg": "#2d2d2d", "padx": 12, "pady": 2, "font": ("Arial", 10, "bold")})
+        self.theme_btn.pack(side="right", padx=4)
 
         # Main split paned layout (Split Viewport Frame / DevTools Panel)
         self.paned_window = tk.PanedWindow(self.root, orient="horizontal", bd=0, sashwidth=4, bg="#2d2d2d")
         self.paned_window.pack(fill="both", expand=True)
 
         # 4. Viewport frame container (Holds active BrowserTab frames dynamically parented to PanedWindow)
-        self.viewport_frame = tk.Frame(self.paned_window, bg="white")
+        self.viewport_frame = tk.Frame(self.paned_window, bg="#121212")
         self.paned_window.add(self.viewport_frame)
         
         # Right pane: DevTools Panel
@@ -1681,6 +1688,69 @@ class SurfGambitApp:
             tab = self.get_active_tab()
             if tab:
                 self.devtools_panel.refresh_devtools(tab)
+
+    def toggle_theme(self):
+        self.dark_mode = not self.dark_mode
+        
+        # Color updates
+        if self.dark_mode:
+            self.chrome_bg = "#1e1e1e"
+            self.button_bg = "#333333"
+            self.button_fg = "#ffffff"
+            self.entry_bg = "#2b2b2b"
+            self.entry_fg = "#ffffff"
+            self.theme_btn.config(text="☯ Theme", bg="#2d2d2d", fg="white")
+        else:
+            self.chrome_bg = "#f0f0f0"
+            self.button_bg = "#d0d0d0"
+            self.button_fg = "#000000"
+            self.entry_bg = "#ffffff"
+            self.entry_fg = "#000000"
+            self.theme_btn.config(text="☯ Theme", bg="#d0d0d0", fg="black")
+            
+        self._apply_chrome_theme()
+        
+        # Trigger full layout and redraw of all tabs!
+        for tab in self.tabs:
+            if tab.current_url.startswith("surfgambit://"):
+                tab.navigate_to(tab.current_url, is_history_action=True)
+            else:
+                tab.trigger_layout()
+
+    def _apply_chrome_theme(self):
+        bg = self.chrome_bg
+        btn_bg = self.button_bg
+        btn_fg = self.button_fg
+        
+        # Update tab bar
+        self.tab_bar_frame.config(bg="#111111" if self.dark_mode else "#e0e0e0")
+        
+        for tab in self.tabs:
+            tab.config(bg="#121212" if self.dark_mode else "white")
+        self.viewport_frame.config(bg="#121212" if self.dark_mode else "white")
+        
+        self.update_tab_bar()
+        
+        def update_widgets(parent):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Button):
+                    if child != self.devtools_btn or not self.devtools_visible:
+                        child.config(bg=btn_bg, fg=btn_fg, activebackground="#555555" if self.dark_mode else "#cccccc")
+                elif isinstance(child, tk.Entry):
+                    child.config(bg=self.entry_bg, fg=self.entry_fg, insertbackground="white" if self.dark_mode else "black")
+                elif isinstance(child, tk.Label):
+                    child.config(bg="#151515" if parent.winfo_name() == "!frame3" else bg, fg="white" if self.dark_mode else "black")
+                update_widgets(child)
+                
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tk.Frame) and widget != self.tab_bar_frame:
+                if widget == self.viewport_frame:
+                    continue
+                if widget.winfo_name() == "!frame3": # Row 2 (Utility Bar)
+                    widget.config(bg="#151515" if self.dark_mode else "#f5f5f5")
+                else: # Row 1 (Navigation Bar)
+                    widget.config(bg=bg)
+                update_widgets(widget)
 
     def on_tab_changed(self, event):
         tab = self.get_active_tab()

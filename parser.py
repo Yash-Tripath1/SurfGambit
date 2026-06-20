@@ -305,8 +305,15 @@ DEFAULT_STYLES: Dict[str, Dict[str, str]] = {
 
 def resolve_styles(node: HTMLNode, rules: List[Tuple[str, Dict[str, str]]], parent_style: Optional[Dict[str, str]] = None):
     if node.is_text():
-        node.style = parent_style.copy() if parent_style else {}
-        node.style["display"] = "inline"
+        # Only inherit valid text properties. Never copy parent borders, paddings, backgrounds!
+        style = {}
+        inheritable_props = ["color", "font-family", "font-size", "font-weight", "font-style", "text-align", "text-decoration"]
+        if parent_style:
+            for prop in inheritable_props:
+                if prop in parent_style:
+                    style[prop] = parent_style[prop]
+        style["display"] = "inline"
+        node.style = style
         return
 
     style = {}
