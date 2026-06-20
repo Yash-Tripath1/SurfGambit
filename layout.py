@@ -7,6 +7,7 @@ class TextMeasurer:
         self._fonts = {}
         self._tk_font_module = None
         self._root = None
+        self.zoom = 1.0
 
     def _init_tk(self):
         if self._root is None:
@@ -54,8 +55,11 @@ class TextMeasurer:
         except Exception:
             size_int = 16
             
+        # Scale by zoom level
+        size_int = int(size_int * self.zoom)
+        
         # Clamp font size to reasonable bounds
-        size_int = max(8, min(size_int, 72))
+        size_int = max(4, min(size_int, 144))
             
         weight_str = "bold" if "bold" in str(weight).lower() else "normal"
         slant_str = "italic" if "italic" in str(slant).lower() else "roman"
@@ -90,6 +94,9 @@ class TextMeasurer:
                     sz = int(float(size))
             except Exception:
                 sz = 16
+            
+            # Scale by zoom level
+            sz = int(sz * self.zoom)
             
             char_w = sz * 0.55
             if "bold" in str(weight).lower():

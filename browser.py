@@ -140,8 +140,100 @@ WELCOME_HTML = """
 </html>
 """
 
+class RetroAlienInvader(tk.Canvas):
+    def __init__(self, parent, size=24, color="#00adb5", bg="#151515", main_app=None):
+        super().__init__(parent, width=size, height=size, bg=bg, highlightthickness=0)
+        self.size = size
+        self.color = color
+        self.bg = bg
+        self.main_app = main_app
+        
+        self.frames = [
+            # Frame 1: Standard space invader (standing)
+            [
+                "  X  X  ",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "X      X"
+            ],
+            # Frame 2: Legs closed
+            [
+                "  X  X  ",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                " XXXXXX ",
+                "X      X",
+                " X    X "
+            ],
+            # Frame 3: Arms raised
+            [
+                "X X  X X",
+                " X XXX X",
+                "XXXXXXXX",
+                "XX XXX XX",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "X      X"
+            ],
+            # Frame 4: Squished cheeks dancing!
+            [
+                "  X  X  ",
+                "X XXXXXX",
+                "XXXXXXXX",
+                "X XXXX X",
+                "XXXXXXXX",
+                "  XXXX  ",
+                " X    X ",
+                "  X  X  "
+            ]
+        ]
+        self.current_frame = 0
+        
+        self.bind("<Enter>", self.on_hover_enter)
+        self.bind("<Leave>", self.on_hover_leave)
+        
+        self.animate()
+
+    def animate(self):
+        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
+        # This prevents "invalid command name" after-script crashes when navigating.
+        if not self.winfo_exists():
+            return
+            
+        self.delete("all")
+        frame = self.frames[self.current_frame]
+        pixel_size = self.size / 8
+        
+        for r, row in enumerate(frame):
+            for c, char in enumerate(row):
+                if char == "X":
+                    x1 = c * pixel_size
+                    y1 = r * pixel_size
+                    x2 = x1 + pixel_size
+                    y2 = y1 + pixel_size
+                    self.create_rectangle(x1, y1, x2, y2, fill=self.color, outline="")
+                    
+        self.current_frame = (self.current_frame + 1) % len(self.frames)
+        self.after(250, self.animate) # slightly faster dance speed!
+
+    def on_hover_enter(self, event):
+        if self.main_app:
+            self.main_app.status_bar.config(text="👾: we wa wu!")
+
+    def on_hover_leave(self, event):
+        if self.main_app:
+            self.main_app.status_bar.config(text="Done")
+
+
 class BrowserTab(ttk.Frame):
-    def __init__(self, parent: ttk.Notebook, main_browser: 'SurfGambitApp'):
+    def __init__(self, parent: tk.Frame, main_browser: 'SurfGambitApp'):
         super().__init__(parent)
         self.parent = parent
         self.main_browser = main_browser
@@ -195,24 +287,6 @@ class BrowserTab(ttk.Frame):
         self.canvas.tag_bind("link", "<Leave>", self.on_link_leave)
         self.canvas.tag_bind("link", "<Button-1>", self.on_link_click)
         
-        # Drag Text Selection State & Bindings
-        self.select_start_x = None
-        self.select_start_y = None
-        self.select_end_x = None
-        self.select_end_y = None
-        self.selected_text_content = ""
-        
-        self.canvas.bind("<ButtonPress-1>", self.on_select_start)
-        self.canvas.bind("<B1-Motion>", self.on_select_drag)
-        self.canvas.bind("<ButtonRelease-1>", self.on_select_end)
-        
-        # Right-Click Context Copy Menu
-        self.context_menu = tk.Menu(self, tearoff=0)
-        self.context_menu.add_command(label="📋 Copy Selection", command=self.copy_selection)
-        
-        self.canvas.bind("<Button-3>", self.show_context_menu)
-        self.canvas.bind("<Button-2>", self.show_context_menu)
-        
         # Resize detection
         self.canvas.bind("<Configure>", self.on_resize)
         self.last_width = 0
@@ -261,11 +335,12 @@ class BrowserTab(ttk.Frame):
             self.navigate_to("surfgambit://history", is_history_action=True)
             return
 
-        if url == "surfgambit://clear-bookmarks":
-            hub = load_hub_data()
-            hub["bookmarks"] = []
-            save_hub_data(hub)
-            self.navigate_to("surfgambit://bookmarks", is_history_action=True)
+        if url == "surfgambit://welcome":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.load_welcome_page()
+            self.main_browser.update_ui_state(self)
             return
 
         # Render Bookmarks Hub
@@ -384,20 +459,16 @@ class BrowserTab(ttk.Frame):
             self.main_browser.update_ui_state(self)
             return
 
-        if url == "surfgambit://welcome":
-            if not is_history_action and self.current_url != url:
-                self.back_stack.append(self.current_url)
-                self.forward_stack.clear()
-            self.load_welcome_page()
-            self.main_browser.update_ui_state(self)
-            return
-
         if self.is_loading:
             return # Prevent double loading
             
         self.is_loading = True
         self.main_browser.status_bar.config(text=f"Connecting to {url}...")
         self.main_browser.show_loading_spinner(True)
+        
+        # Clear images cache for the new session
+        self.loaded_images.clear()
+        self.loading_images.clear()
         
         # Launch non-blocking request background thread
         self.loading_thread = threading.Thread(
@@ -444,7 +515,7 @@ class BrowserTab(ttk.Frame):
         # Save to local history log (excluding internal URLs)
         if not resolved_url.startswith("surfgambit://"):
             hub = load_hub_data()
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = time.strftime("%H:%M:%S")
             # Avoid duplicate consecutive logs
             if not hub["history"] or hub["history"][0]["url"] != resolved_url:
                 hub["history"].insert(0, {"url": resolved_url, "time": timestamp})
@@ -526,7 +597,10 @@ class BrowserTab(ttk.Frame):
             return
         self.loading_images.discard(img_url)
         try:
-            photo = tk.PhotoImage(data=img_data)
+            import base64
+            # Encode raw binary data to Base64 (guarantees 100% universal Tcl/Tk image decoding on Windows!)
+            b64_data = base64.b64encode(img_data).decode("utf-8")
+            photo = tk.PhotoImage(data=b64_data)
             self.loaded_images[img_url] = photo
             
             # Reflow: If sizing was implicit, update using actual PhotoImage width/height
@@ -713,7 +787,7 @@ class BrowserTab(ttk.Frame):
                         # Sanitize colors for Tkinter compatibility (bypasses CSS 'inherit', 'unset', variables)
                         color_lower = color.lower().strip()
                         if color_lower in ("inherit", "initial", "unset", "currentcolor", "transparent", ""):
-                            color = "white" if self.current_url.startswith("surfgambit://welcome") else "black"
+                            color = "white" if self.current_url.startswith("surfgambit://") else "black"
                         elif color_lower.startswith("rgba"):
                             color = "black" # basic solid color fallback for canvas text
                         elif color_lower.startswith("var("):
@@ -862,66 +936,6 @@ class BrowserTab(ttk.Frame):
         elif event.num == 4 or event.delta > 0:
             self.canvas.yview_scroll(-1, "units")
 
-    def on_select_start(self, event):
-        self.select_start_x = self.canvas.canvasx(event.x)
-        self.select_start_y = self.canvas.canvasy(event.y)
-        self.canvas.delete("selection")
-        self.selected_text_content = ""
-
-    def on_select_drag(self, event):
-        self.select_end_x = self.canvas.canvasx(event.x)
-        self.select_end_y = self.canvas.canvasy(event.y)
-        self.canvas.delete("selection")
-        self.canvas.create_rectangle(
-            self.select_start_x, self.select_start_y,
-            self.select_end_x, self.select_end_y,
-            fill="", outline="#00adb5", width=2, dash=(2, 2), tags="selection"
-        )
-
-    def on_select_end(self, event):
-        if self.select_start_x is None or self.select_end_x is None:
-            return
-        x1, x2 = min(self.select_start_x, self.select_end_x), max(self.select_start_x, self.select_end_x)
-        y1, y2 = min(self.select_start_y, self.select_end_y), max(self.select_start_y, self.select_end_y)
-        
-        if (x2 - x1) < 5 and (y2 - y1) < 5:
-            self.canvas.delete("selection")
-            return
-            
-        words_found = []
-        def collect_text(box):
-            if box.lines:
-                for line, line_h in box.lines:
-                    for item in line:
-                        itype, node, style, text, rx, ry, rw, rh = item
-                        if itype == "word":
-                            ax = box.x + rx + box.padding_left
-                            ay = box.y + ry + box.padding_top
-                            cx = ax + rw/2
-                            cy = ay + rh/2
-                            if x1 <= cx <= x2 and y1 <= cy <= y2:
-                                words_found.append((ay, ax, text))
-            for child in box.children:
-                collect_text(child)
-                
-        if self.layout_tree:
-            collect_text(self.layout_tree)
-            
-        words_found.sort(key=lambda w: (w[0], w[1]))
-        self.selected_text_content = " ".join(w[2] for w in words_found)
-        
-        if self.selected_text_content.strip():
-            self.main_browser.status_bar.config(text=f"Selected: {len(self.selected_text_content)} chars. Right-click to Copy.")
-
-    def show_context_menu(self, event):
-        self.context_menu.post(event.x_root, event.y_root)
-
-    def copy_selection(self):
-        if self.selected_text_content.strip():
-            self.clipboard_clear()
-            self.clipboard_append(self.selected_text_content)
-            self.main_browser.status_bar.config(text="Selection copied to clipboard!")
-
     def on_resize(self, event):
         # Trigger layout on width resizing boundaries
         if abs(event.width - self.last_width) > 10:
@@ -1022,97 +1036,65 @@ class BrowserTab(ttk.Frame):
         # 8. Trigger navigation
         self.navigate_to(target_url)
 
+    def on_select_start(self, event):
+        self.select_start_x = self.canvas.canvasx(event.x)
+        self.select_start_y = self.canvas.canvasy(event.y)
+        self.canvas.delete("selection")
+        self.selected_text_content = ""
 
-class RetroAlienInvader(tk.Canvas):
-    def __init__(self, parent, size=24, color="#00adb5", bg="#151515", main_app=None):
-        super().__init__(parent, width=size, height=size, bg=bg, highlightthickness=0)
-        self.size = size
-        self.color = color
-        self.bg = bg
-        self.main_app = main_app
-        
-        self.frames = [
-            # Frame 1: Standard space invader (standing)
-            [
-                "  X  X  ",
-                " X XXX X",
-                "XXXXXXXX",
-                "XX XXX XX",
-                "XXXXXXXX",
-                "  XXXX  ",
-                " X    X ",
-                "X      X"
-            ],
-            # Frame 2: Legs closed
-            [
-                "  X  X  ",
-                " X XXX X",
-                "XXXXXXXX",
-                "XX XXX XX",
-                "XXXXXXXX",
-                " XXXXXX ",
-                "X      X",
-                " X    X "
-            ],
-            # Frame 3: Arms raised
-            [
-                "X X  X X",
-                " X XXX X",
-                "XXXXXXXX",
-                "XX XXX XX",
-                "XXXXXXXX",
-                "  XXXX  ",
-                " X    X ",
-                "X      X"
-            ],
-            # Frame 4: Squished cheeks dancing!
-            [
-                "  X  X  ",
-                "X XXXXXX",
-                "XXXXXXXX",
-                "X XXXX X",
-                "XXXXXXXX",
-                "  XXXX  ",
-                " X    X ",
-                "  X  X  "
-            ]
-        ]
-        self.current_frame = 0
-        
-        self.bind("<Enter>", self.on_hover_enter)
-        self.bind("<Leave>", self.on_hover_leave)
-        
-        self.animate()
+    def on_select_drag(self, event):
+        self.select_end_x = self.canvas.canvasx(event.x)
+        self.select_end_y = self.canvas.canvasy(event.y)
+        self.canvas.delete("selection")
+        self.canvas.create_rectangle(
+            self.select_start_x, self.select_start_y,
+            self.select_end_x, self.select_end_y,
+            fill="", outline="#00adb5", width=2, dash=(2, 2), tags="selection"
+        )
 
-    def animate(self):
-        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
-        # This prevents "invalid command name" after-script crashes when navigating.
-        if not self.winfo_exists():
+    def on_select_end(self, event):
+        if self.select_start_x is None or self.select_end_x is None:
+            return
+        x1, x2 = min(self.select_start_x, self.select_end_x), max(self.select_start_x, self.select_end_x)
+        y1, y2 = min(self.select_start_y, self.select_end_y), max(self.select_start_y, self.select_end_y)
+        
+        if (x2 - x1) < 5 and (y2 - y1) < 5:
+            self.canvas.delete("selection")
             return
             
-        self.delete("all")
-        frame = self.frames[self.current_frame]
-        pixel_size = self.size / 8
+        words_found = []
+        def collect_text(box):
+            if box.lines:
+                for line, line_h in box.lines:
+                    for item in line:
+                        itype, node, style, text, rx, ry, rw, rh = item
+                        if itype == "word":
+                            ax = box.x + rx + box.padding_left
+                            ay = box.y + ry + box.padding_top
+                            cx = ax + rw/2
+                            cy = ay + rh/2
+                            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                                words_found.append((ay, ax, text))
+            for child in box.children:
+                collect_text(child)
+                
+        if self.layout_tree:
+            collect_text(self.layout_tree)
+            
+        words_found.sort(key=lambda w: (w[0], w[1]))
+        self.selected_text_content = " ".join(w[2] for w in words_found)
         
-        for r, row in enumerate(frame):
-            for c, char in enumerate(row):
-                if char == "X":
-                    x1 = c * pixel_size
-                    y1 = r * pixel_size
-                    x2 = x1 + pixel_size
-                    y2 = y1 + pixel_size
-                    self.create_rectangle(x1, y1, x2, y2, fill=self.color, outline="")
-                    
-        self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.after(250, self.animate) # slightly faster dance speed!
+        if self.selected_text_content.strip():
+            self.main_browser.status_bar.config(text=f"Selected: {len(self.selected_text_content)} chars. Right-click to Copy.")
 
-    def on_hover_enter(self, event):
-        if self.main_app:
-            self.main_app.status_bar.config(text="👾: we wa wu!")
+    def show_context_menu(self, event):
+        self.context_menu.post(event.x_root, event.y_root)
 
-    def on_hover_leave(self, event):
-        if self.main_app:
-            self.main_app.status_bar.config(text="Done")
+    def copy_selection(self):
+        if self.selected_text_content.strip():
+            self.clipboard_clear()
+            self.clipboard_append(self.selected_text_content)
+            self.main_browser.status_bar.config(text="Selection copied to clipboard!")
 
 
 class DevToolsFrame(ttk.Frame):
@@ -1210,6 +1192,11 @@ class SurfGambitApp:
         self.entry_fg = "#ffffff"
         
         self._setup_styles()
+        
+        # Chrome Custom Tab Bar State
+        self.tabs: List[BrowserTab] = []
+        self.active_tab_idx: int = -1
+        
         self._build_ui()
 
     def _setup_styles(self):
@@ -1224,7 +1211,11 @@ class SurfGambitApp:
         style.configure("TFrame", background="#1e1e1e")
 
     def _build_ui(self):
-        # 1. Primary Navigation Bar (Row 1)
+        # 1. Custom Google Chrome-style Tab Bar Frame (Row 1)
+        self.tab_bar_frame = tk.Frame(self.root, bg="#111111", height=32)
+        self.tab_bar_frame.pack(side="top", fill="x")
+        
+        # 2. Primary Navigation Bar (Row 2)
         nav_row1 = tk.Frame(self.root, bg=self.chrome_bg, padx=6, pady=4)
         nav_row1.pack(side="top", fill="x")
         
@@ -1261,15 +1252,8 @@ class SurfGambitApp:
         self.search_engine_combo = ttk.Combobox(nav_row1, values=["Google", "DuckDuckGo", "Wikipedia"], width=11, state="readonly")
         self.search_engine_combo.set("DuckDuckGo")
         self.search_engine_combo.pack(side="left", padx=4)
-        
-        # Tab Actions packed on the right of Row 1 (standard modern browser style)
-        self.add_tab_btn = tk.Button(nav_row1, text="➕ New Tab", command=self.new_tab, **btn_opts)
-        self.add_tab_btn.pack(side="right", padx=2)
-        
-        self.close_tab_btn = tk.Button(nav_row1, text="❌ Close Tab", command=self.close_current_tab, **btn_opts)
-        self.close_tab_btn.pack(side="right", padx=2)
 
-        # 2. Secondary Utility Bar (Row 2) - Slightly darker background for visual layering
+        # 3. Secondary Utility Bar (Row 3) - Slightly darker background for visual layering
         nav_row2 = tk.Frame(self.root, bg="#151515", padx=6, pady=4)
         nav_row2.pack(side="top", fill="x")
         
@@ -1303,24 +1287,21 @@ class SurfGambitApp:
         self.clear_btn = tk.Button(nav_row2, text="Clear", command=self.clear_search, **{**btn_opts, "bg": "#2d2d2d", "padx": 10, "pady": 2, "font": ("Arial", 9, "bold")})
         self.clear_btn.pack(side="left", padx=2)
         
-        # Developer Console Button (packed on the right of Row 2)
+        # Developer Console Button (packed on the right of Row 3)
         self.devtools_btn = tk.Button(nav_row2, text="🛠 DevTools Console", command=self.toggle_devtools, **{**btn_opts, "bg": "#2d2d2d", "padx": 12, "pady": 2, "font": ("Arial", 10, "bold")})
         self.devtools_btn.pack(side="right", padx=4)
 
-        # 3. Main horizontal paned layout (Split Browser / DevTools)
+        # Main split paned layout (Split Viewport Frame / DevTools Panel)
         self.paned_window = tk.PanedWindow(self.root, orient="horizontal", bd=0, sashwidth=4, bg="#2d2d2d")
         self.paned_window.pack(fill="both", expand=True)
         
-        # Left pane: Tab manager notebook
-        self.notebook = ttk.Notebook(self.paned_window)
-        self.paned_window.add(self.notebook)
+        # 4. Viewport frame container (Holds active BrowserTab frames dynamically parented to PanedWindow)
+        self.viewport_frame = tk.Frame(self.paned_window, bg="white")
+        self.paned_window.add(self.viewport_frame)
         
         # Right pane: DevTools Panel
         self.devtools_panel = DevToolsFrame(self.paned_window)
         self.devtools_visible = False
-        
-        # Tab notebook navigation callbacks
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         
         # 3. Status Bar
         self.status_bar = tk.Label(self.root, text="Done", bd=1, relief="sunken", anchor="w", bg="#151515", fg="#aaa", font=("Arial", 10), padx=4, pady=4)
@@ -1328,24 +1309,95 @@ class SurfGambitApp:
         
         # Create initial startup tab
         self.new_tab()
+
+    def update_tab_bar(self):
+        # Clear existing tab frames in tab bar
+        for widget in self.tab_bar_frame.winfo_children():
+            widget.destroy()
+            
+        # Draw active tabs
+        for idx, tab in enumerate(self.tabs):
+            tab_frame = tk.Frame(self.tab_bar_frame, bg="#2d2d2d" if idx == self.active_tab_idx else "#151515", padx=4, pady=2)
+            tab_frame.pack(side="left", padx=2, fill="y")
+            
+            # Format title string
+            title = tab.current_url
+            if title.startswith("http://"):
+                title = title[7:]
+            elif title.startswith("https://"):
+                title = title[8:]
+            if len(title) > 16:
+                title = title[:13] + "..."
+                
+            tab_lbl = tk.Label(
+                tab_frame, text=title, bg="#2d2d2d" if idx == self.active_tab_idx else "#151515",
+                fg="white", font=("Arial", 10, "bold" if idx == self.active_tab_idx else "normal"),
+                cursor="hand2"
+            )
+            tab_lbl.pack(side="left", padx=4)
+            tab_lbl.bind("<Button-1>", lambda e, i=idx: self.select_tab(i))
+            
+            # Tiny modern close 'x' button
+            close_btn = tk.Button(
+                tab_frame, text="×", bg="#2d2d2d" if idx == self.active_tab_idx else "#151515",
+                fg="#ff5722", activebackground="#222222", bd=0, cursor="hand2",
+                font=("Arial", 11, "bold"), padx=2, pady=0,
+                command=lambda i=idx: self.close_tab_at(i)
+            )
+            close_btn.pack(side="left", padx=2)
+            
+        # Plus tab button packed adjacent to tabs
+        add_tab_btn = tk.Button(
+            self.tab_bar_frame, text=" ＋ ", bg="#111111", fg="white",
+            activebackground="#333333", activeforeground="white", bd=0,
+            font=("Arial", 11, "bold"), cursor="hand2", padx=6, pady=2,
+            command=self.new_tab
+        )
+        add_tab_btn.pack(side="left", padx=4)
+
+    def select_tab(self, idx: int):
+        if not (0 <= idx < len(self.tabs)):
+            return
+            
+        # Hide current active tab frame
+        if self.active_tab_idx != -1 and self.active_tab_idx < len(self.tabs):
+            self.tabs[self.active_tab_idx].pack_forget()
+            
+        self.active_tab_idx = idx
+        active_tab = self.tabs[idx]
         
-        # Bind Ctrl+F for quick search focus
-        self.root.bind("<Control-f>", lambda e: self.search_entry.focus_set())
-        self.root.bind("<Control-F>", lambda e: self.search_entry.focus_set())
+        # Display new active tab frame
+        active_tab.pack(fill="both", expand=True)
+        
+        # Update UI bindings & states
+        self.update_tab_bar()
+        self.update_ui_state(active_tab)
+
+    def close_tab_at(self, idx: int):
+        if len(self.tabs) <= 1:
+            self.status_bar.config(text="Cannot close the last remaining tab!")
+            return
+            
+        tab = self.tabs[idx]
+        tab.destroy() # safe Tkinter disposal
+        self.tabs.pop(idx)
+        
+        # Calibrate active pointer limits
+        if self.active_tab_idx >= len(self.tabs):
+            self.active_tab_idx = len(self.tabs) - 1
+        elif self.active_tab_idx == idx:
+            self.active_tab_idx = min(idx, len(self.tabs) - 1)
+            
+        self.select_tab(self.active_tab_idx)
 
     def new_tab(self):
-        tab = BrowserTab(self.notebook, self)
-        self.notebook.add(tab, text="New Tab")
-        self.notebook.select(tab)
+        tab = BrowserTab(self.viewport_frame, self)
+        self.tabs.append(tab)
+        self.select_tab(len(self.tabs) - 1)
         return tab
 
     def close_current_tab(self):
-        # Allow closing tabs if we have more than one tab open
-        if self.notebook.index("end") > 1:
-            current_idx = self.notebook.index("current")
-            self.notebook.forget(current_idx)
-        else:
-            self.status_bar.config(text="Cannot close the last remaining tab!")
+        self.close_tab_at(self.active_tab_idx)
 
     def add_bookmark(self):
         tab = self.get_active_tab()
@@ -1448,21 +1500,12 @@ class SurfGambitApp:
         # Update Zoom displays
         self.zoom_lbl.config(text=f"{int(tab.zoom_level * 100)}%")
         
-        # Update tab title header
-        current_idx = self.notebook.index("current")
-        title = tab.current_url
-        if title.startswith("http://"):
-            title = title[7:]
-        elif title.startswith("https://"):
-            title = title[8:]
-        if len(title) > 20:
-            title = title[:17] + "..."
-            
-        self.notebook.tab(current_idx, text=title)
-        
         # Refresh Developer Console side-view
         if self.devtools_visible:
             self.devtools_panel.refresh_devtools(tab)
+            
+        # Repaint tab bar names dynamically on titles arrival
+        self.update_tab_bar()
 
     def show_loading_spinner(self, is_loading: bool):
         if not self.root.winfo_exists():
@@ -1473,9 +1516,8 @@ class SurfGambitApp:
             self.refresh_btn.config(text="⟳", state="normal")
 
     def get_active_tab(self) -> Optional[BrowserTab]:
-        selected = self.notebook.select()
-        if selected:
-            return self.notebook.nametowidget(selected)
+        if 0 <= self.active_tab_idx < len(self.tabs):
+            return self.tabs[self.active_tab_idx]
         return None
 
     def start(self):
