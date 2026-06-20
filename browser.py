@@ -113,18 +113,6 @@ WELCOME_HTML = """
         <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
     </div>
 
-    <!-- Live Dual Column Dashboard powered by custom inline-block layouts! -->
-    <div style="text-align: center; margin: 20px auto; max-width: 650px;">
-        <div class="col" style="display: inline-block; width: 310px; background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-right: 15px; text-align: left; height: 110px;">
-            <h3 style="color: #00adb5; margin-top: 0px; font-size: 16px;">📰 Tech News</h3>
-            <p style="font-size: 12px; line-height: 1.4; color: #aaa; margin-top: 5px;">Visit <a href="https://news.ycombinator.com">Hacker News</a> to read top stories directly inside SurfGambit!</p>
-        </div>
-        <div class="col" style="display: inline-block; width: 310px; background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; text-align: left; height: 110px;">
-            <h3 style="color: #00adb5; margin-top: 0px; font-size: 16px;">💡 Daily Advice</h3>
-            <p style="font-size: 12px; line-height: 1.4; color: #00adb5; font-style: italic; margin-top: 5px;" id="advice-slot">Loading daily advice...</p>
-        </div>
-    </div>
-
     <div class="card">
         <h2>🚀 Deeply Custom Architecture</h2>
         <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
@@ -350,30 +338,9 @@ class BrowserTab(ttk.Frame):
         self.css_rules = parser.get_style_sheets(self.dom_tree)
         parser.resolve_styles(self.dom_tree, self.css_rules)
         self._start_image_downloads()
-        
-        # Start async tech advice fetch
-        threading.Thread(target=self._async_fetch_live_advice, daemon=True).start()
-        
         self.trigger_layout()
 
-    def _async_fetch_live_advice(self):
-        try:
-            resp = network.request("https://api.adviceslip.com/advice")
-            data = json.loads(resp.text)
-            advice = data["slip"]["advice"]
-            self.after(0, self._on_live_advice_loaded, advice)
-        except Exception:
-            pass
 
-    def _on_live_advice_loaded(self, advice: str):
-        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
-            return
-        if 'id="advice-slot"' in self.raw_html:
-            self.raw_html = self.raw_html.replace('id="advice-slot">Loading daily advice...<', f'id="advice-slot">"{advice}"<')
-            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
-            self.css_rules = parser.get_style_sheets(self.dom_tree)
-            parser.resolve_styles(self.dom_tree, self.css_rules)
-            self.trigger_layout()
 
     def navigate_to(self, url: str, is_history_action=False):
         url = url.strip()
