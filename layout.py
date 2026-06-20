@@ -268,6 +268,13 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
         if b.node.tag in ("input", "button", "textarea", "alien"):
             items.append(("widget", b.node, b.node.style, ""))
             return
+        if b.node.style.get("display") == "inline-block" or b.node.attributes.get("class", "") == "col":
+            # Layout inline-block columns next to each other
+            w_val = b.node.style.get("width")
+            w = parse_px_val(w_val, 180) # default width for inline-blocks
+            compute_layout(b, 0, 0, w, measurer)
+            items.append(("inline-block", b, b.node.style, f"{w},{b.height}"))
+            return
         if b.node.is_text():
             text = b.node.text
             # Standard HTML: collapse all whitespaces to single spaces
@@ -379,6 +386,30 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
             max_line_height = max(max_line_height, scaled_h)
             # pack width and height as text 'w,h' for convenience
             current_line.append(("widget", node, style, f"{scaled_w},{scaled_h}", cx, cy, scaled_w, scaled_h))
+            cx += scaled_w
+            continue
+
+        if item_type == "inline-block":
+            child_box = node
+            try:
+                w_str, h_str = text.split(",")
+                w = int(w_str)
+                h = int(h_str)
+            except Exception:
+                w, h = 180, 100
+                
+            scaled_w = int(w * measurer.zoom)
+            scaled_h = int(h * measurer.zoom)
+            
+            if cx + scaled_w > available_width and cx > 0:
+                lines.append((current_line, max_line_height))
+                current_line = []
+                cy += max_line_height + line_spacing
+                cx = 0
+                max_line_height = 0
+                
+            max_line_height = max(max_line_height, scaled_h)
+            current_line.append(("inline-block", child_box, style, text, cx, cy, scaled_w, scaled_h))
             cx += scaled_w
             continue
 

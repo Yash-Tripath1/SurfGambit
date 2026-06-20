@@ -5,6 +5,7 @@ import urllib.parse
 import json
 import os
 import time
+import base64
 from typing import Dict, List, Tuple, Optional
 
 import network
@@ -12,6 +13,7 @@ import parser
 import layout
 
 HUB_FILE = "bookmarks.json"
+DOWNLOADS_FILE = "downloads.json"
 
 def load_hub_data() -> Dict[str, List[Dict[str, str]]]:
     if not os.path.exists(HUB_FILE):
@@ -25,6 +27,22 @@ def load_hub_data() -> Dict[str, List[Dict[str, str]]]:
 def save_hub_data(data: Dict[str, List[Dict[str, str]]]):
     try:
         with open(HUB_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
+
+def load_downloads_data() -> List[Dict[str, str]]:
+    if not os.path.exists(DOWNLOADS_FILE):
+        return []
+    try:
+        with open(DOWNLOADS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def save_downloads_data(data: List[Dict[str, str]]):
+    try:
+        with open(DOWNLOADS_FILE, "w") as f:
             json.dump(data, f, indent=4)
     except Exception:
         pass
@@ -47,6 +65,7 @@ WELCOME_HTML = """
             margin: 20px auto; 
             max-width: 650px; 
             text-align: left; 
+            border-radius: 8px;
         }
         h1 { 
             color: #00adb5; 
@@ -90,7 +109,20 @@ WELCOME_HTML = """
     
     <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
         <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
-        <a href="surfgambit://history" style="font-weight: bold;">📜 History Log</a>
+        <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">📜 History Log</a> |
+        <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
+    </div>
+
+    <!-- Live Dual Column Dashboard powered by custom inline-block layouts! -->
+    <div style="text-align: center; margin: 20px auto; max-width: 650px;">
+        <div class="col" style="display: inline-block; width: 310px; background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; margin-right: 15px; text-align: left; height: 110px;">
+            <h3 style="color: #00adb5; margin-top: 0px; font-size: 16px;">📰 Tech News</h3>
+            <p style="font-size: 12px; line-height: 1.4; color: #aaa; margin-top: 5px;">Visit <a href="https://news.ycombinator.com">Hacker News</a> to read top stories directly inside SurfGambit!</p>
+        </div>
+        <div class="col" style="display: inline-block; width: 310px; background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 15px; text-align: left; height: 110px;">
+            <h3 style="color: #00adb5; margin-top: 0px; font-size: 16px;">💡 Daily Advice</h3>
+            <p style="font-size: 12px; line-height: 1.4; color: #00adb5; font-style: italic; margin-top: 5px;" id="advice-slot">Loading daily advice...</p>
+        </div>
     </div>
 
     <div class="card">
@@ -98,9 +130,8 @@ WELCOME_HTML = """
         <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
         <div class="tech-list">
             - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
-            - [parser.py]: State-machine HTML compiler & CSS Selector Cascadence specificity.<br>
-            - [layout.py]: Geometry flow solvers, word wrapping, padding margins, alignment.<br>
-            - [browser.py]: Multi-threaded UI shell, Canvas viewport painter, tabs management.
+            - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
+            - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
         </div>
     </div>
     
@@ -134,7 +165,7 @@ WELCOME_HTML = """
     </div>
     
     <div style="color: #444; font-size: 12px; margin-top: 40px;">
-        SurfGambit Client v1.2 | Standalone Sandbox Session
+        SurfGambit Client v1.3 | Standalone Sandbox Session
     </div>
 </body>
 </html>
@@ -287,6 +318,24 @@ class BrowserTab(ttk.Frame):
         self.canvas.tag_bind("link", "<Leave>", self.on_link_leave)
         self.canvas.tag_bind("link", "<Button-1>", self.on_link_click)
         
+        # Drag Text Selection State & Bindings
+        self.select_start_x = None
+        self.select_start_y = None
+        self.select_end_x = None
+        self.select_end_y = None
+        self.selected_text_content = ""
+        
+        self.canvas.bind("<ButtonPress-1>", self.on_select_start)
+        self.canvas.bind("<B1-Motion>", self.on_select_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_select_end)
+        
+        # Right-Click Context Copy Menu
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="📋 Copy Selection", command=self.copy_selection)
+        
+        self.canvas.bind("<Button-3>", self.show_context_menu)
+        self.canvas.bind("<Button-2>", self.show_context_menu)
+        
         # Resize detection
         self.canvas.bind("<Configure>", self.on_resize)
         self.last_width = 0
@@ -301,7 +350,30 @@ class BrowserTab(ttk.Frame):
         self.css_rules = parser.get_style_sheets(self.dom_tree)
         parser.resolve_styles(self.dom_tree, self.css_rules)
         self._start_image_downloads()
+        
+        # Start async tech advice fetch
+        threading.Thread(target=self._async_fetch_live_advice, daemon=True).start()
+        
         self.trigger_layout()
+
+    def _async_fetch_live_advice(self):
+        try:
+            resp = network.request("https://api.adviceslip.com/advice")
+            data = json.loads(resp.text)
+            advice = data["slip"]["advice"]
+            self.after(0, self._on_live_advice_loaded, advice)
+        except Exception:
+            pass
+
+    def _on_live_advice_loaded(self, advice: str):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
+        if 'id="advice-slot"' in self.raw_html:
+            self.raw_html = self.raw_html.replace('id="advice-slot">Loading daily advice...<', f'id="advice-slot">"{advice}"<')
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
 
     def navigate_to(self, url: str, is_history_action=False):
         url = url.strip()
@@ -327,6 +399,17 @@ class BrowserTab(ttk.Frame):
                 else:
                     url = f"https://html.duckduckgo.com/html/?q={query_encoded}"
 
+        # Intercept and process direct file download URLs
+        parsed_path = urllib.parse.urlparse(url).path
+        download_exts = {".zip", ".pdf", ".exe", ".dmg", ".pkg", ".tar.gz", ".rar", ".mp3", ".mp4", ".bin", ".iso"}
+        is_download = any(parsed_path.endswith(ext) for ext in download_exts)
+        
+        if is_download:
+            self.main_browser.status_bar.config(text=f"Streaming download for {os.path.basename(parsed_path)}...")
+            threading.Thread(target=self._async_download_file, args=(url,), daemon=True).start()
+            self.navigate_to("surfgambit://downloads", is_history_action=True)
+            return
+
         # Handle Internal Command Actions
         if url == "surfgambit://clear-history":
             hub = load_hub_data()
@@ -335,12 +418,11 @@ class BrowserTab(ttk.Frame):
             self.navigate_to("surfgambit://history", is_history_action=True)
             return
 
-        if url == "surfgambit://welcome":
-            if not is_history_action and self.current_url != url:
-                self.back_stack.append(self.current_url)
-                self.forward_stack.clear()
-            self.load_welcome_page()
-            self.main_browser.update_ui_state(self)
+        if url == "surfgambit://clear-bookmarks":
+            hub = load_hub_data()
+            hub["bookmarks"] = []
+            save_hub_data(hub)
+            self.navigate_to("surfgambit://bookmarks", is_history_action=True)
             return
 
         # Render Bookmarks Hub
@@ -371,7 +453,7 @@ class BrowserTab(ttk.Frame):
                 <style>
                     body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
                     h1 {{ color: #00adb5; }}
-                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; }}
+                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
                     .item {{ margin-bottom: 15px; border-bottom: 1px solid #222; padding-bottom: 10px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .url {{ color: #888; font-size: 12px; font-family: monospace; }}
@@ -384,7 +466,8 @@ class BrowserTab(ttk.Frame):
                 <div class="nav">
                     <a href="surfgambit://welcome">Home</a> | 
                     <a href="surfgambit://bookmarks">Bookmarks</a> | 
-                    <a href="surfgambit://history">History</a>
+                    <a href="surfgambit://history">History</a> |
+                    <a href="surfgambit://downloads">Downloads</a>
                 </div>
                 <div class="card">
                     <h2>⭐ Saved Bookmarks</h2>
@@ -429,7 +512,7 @@ class BrowserTab(ttk.Frame):
                 <style>
                     body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
                     h1 {{ color: #00adb5; }}
-                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; }}
+                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
                     .item {{ margin-bottom: 12px; font-size: 14px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
@@ -441,7 +524,8 @@ class BrowserTab(ttk.Frame):
                 <div class="nav">
                     <a href="surfgambit://welcome">Home</a> | 
                     <a href="surfgambit://bookmarks">Bookmarks</a> | 
-                    <a href="surfgambit://history">History</a>
+                    <a href="surfgambit://history">History</a> |
+                    <a href="surfgambit://downloads">Downloads</a>
                 </div>
                 <div class="card">
                     <h2>📜 Browsing History</h2>
@@ -456,6 +540,71 @@ class BrowserTab(ttk.Frame):
             self.css_rules = parser.get_style_sheets(self.dom_tree)
             parser.resolve_styles(self.dom_tree, self.css_rules)
             self.trigger_layout()
+            self.main_browser.update_ui_state(self)
+            return
+
+        # Render Downloads Manager Hub
+        if url == "surfgambit://downloads":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.current_url = url
+            
+            dw_list = load_downloads_data()
+            dw_items_html = ""
+            if dw_list:
+                for d in dw_list:
+                    name = d["name"]
+                    status = d["status"]
+                    time_s = d["time"]
+                    dw_items_html += f"""
+                    <div class="item">
+                        <span style="font-weight: bold; color: #00adb5;">{name}</span><br>
+                        <span style="font-size: 12px; color: #888;">Time: {time_s} | Status: {status}</span>
+                    </div>
+                    """
+            else:
+                dw_items_html = "<p style='color: #888;'>No downloads recorded.</p>"
+                
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
+                    .item {{ margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid #222; padding-bottom: 10px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .nav {{ margin-bottom: 25px; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Downloads</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a> |
+                    <a href="surfgambit://downloads">Downloads</a>
+                </div>
+                <div class="card">
+                    <h2>⬇️ Active &amp; Completed Downloads</h2>
+                    {dw_items_html}
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
+            return
+
+        if url == "surfgambit://welcome":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.load_welcome_page()
             self.main_browser.update_ui_state(self)
             return
 
@@ -477,6 +626,55 @@ class BrowserTab(ttk.Frame):
             daemon=True
         )
         self.loading_thread.start()
+
+    def _async_download_file(self, url: str):
+        try:
+            filename = os.path.basename(urllib.parse.urlparse(url).path) or "downloaded_file"
+            time_s = time.strftime("%H:%M:%S")
+            
+            # Initial download registration
+            dw_list = load_downloads_data()
+            dw_list.insert(0, {"name": filename, "url": url, "status": "Downloading...", "time": time_s})
+            save_downloads_data(dw_list)
+            
+            # Trigger download over raw socket
+            resp = network.request(url)
+            
+            # Resolve actual Windows/system downloads path dynamically (e.g. C:\Users\tripa\Downloads)
+            system_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+            os.makedirs(system_downloads, exist_ok=True)
+            save_path = os.path.join(system_downloads, filename)
+            
+            with open(save_path, "wb") as f:
+                f.write(resp.body)
+                
+            # Mark download complete
+            dw_list = load_downloads_data()
+            for d in dw_list:
+                if d["url"] == url:
+                    d["status"] = "Completed"
+                    break
+            save_downloads_data(dw_list)
+            
+            self.after(0, self._on_download_complete, filename)
+        except Exception as e:
+            self.after(0, self._on_download_error, url, str(e))
+
+    def _on_download_complete(self, filename: str):
+        self.main_browser.status_bar.config(text=f"Successfully downloaded {filename}! Saved to Downloads/")
+        if self.current_url == "surfgambit://downloads":
+            self.navigate_to("surfgambit://downloads", is_history_action=True)
+
+    def _on_download_error(self, url: str, err: str):
+        self.main_browser.status_bar.config(text=f"Download failed: {err}")
+        dw_list = load_downloads_data()
+        for d in dw_list:
+            if d["url"] == url:
+                d["status"] = f"Failed: {err}"
+                break
+        save_downloads_data(dw_list)
+        if self.current_url == "surfgambit://downloads":
+            self.navigate_to("surfgambit://downloads", is_history_action=True)
 
     def _async_fetch_and_parse(self, url: str, is_history_action: bool):
         try:
@@ -697,14 +895,48 @@ class BrowserTab(ttk.Frame):
                 text=f"Find: Highlighted {self.search_matches_count} occurrences of '{self.search_term}' on this page."
             )
 
+    def _draw_rounded_rect(self, x1, y1, x2, y2, radius=8, fill="", outline="", width=1):
+        if radius <= 0:
+            self.canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline=outline, width=width)
+            return
+            
+        # Draw filled shape
+        if fill and fill.lower() != "transparent":
+            self.canvas.create_arc(x1, y1, x1+2*radius, y1+2*radius, start=90, extent=90, style="pieslice", fill=fill, outline="")
+            self.canvas.create_arc(x2-2*radius, y1, x2, y1+2*radius, start=0, extent=90, style="pieslice", fill=fill, outline="")
+            self.canvas.create_arc(x2-2*radius, y2-2*radius, x2, y2, start=270, extent=90, style="pieslice", fill=fill, outline="")
+            self.canvas.create_arc(x1, y2-2*radius, x1+2*radius, y2, start=180, extent=90, style="pieslice", fill=fill, outline="")
+            
+            self.canvas.create_rectangle(x1+radius, y1, x2-radius, y2, fill=fill, outline="")
+            self.canvas.create_rectangle(x1, y1+radius, x2, y2-radius, fill=fill, outline="")
+            
+        # Draw border outline
+        if outline and outline.lower() != "transparent" and width > 0:
+            self.canvas.create_arc(x1, y1, x1+2*radius, y1+2*radius, start=90, extent=90, style="arc", outline=outline, width=width)
+            self.canvas.create_arc(x2-2*radius, y1, x2, y1+2*radius, start=0, extent=90, style="arc", outline=outline, width=width)
+            self.canvas.create_arc(x2-2*radius, y2-2*radius, x2, y2, start=270, extent=90, style="arc", outline=outline, width=width)
+            self.canvas.create_arc(x1, y2-2*radius, x1+2*radius, y2, start=180, extent=90, style="arc", outline=outline, width=width)
+            
+            self.canvas.create_line(x1+radius, y1, x2-radius, y1, fill=outline, width=width)
+            self.canvas.create_line(x1+radius, y2, x2-radius, y2, fill=outline, width=width)
+            self.canvas.create_line(x1, y1+radius, x1, y2-radius, fill=outline, width=width)
+            self.canvas.create_line(x2, y1+radius, x2, y2-radius, fill=outline, width=width)
+
     def _render_box(self, box: layout.LayoutBox):
+        # Parse border radius
+        radius_str = box.node.style.get("border-radius")
+        radius = layout.parse_px_val(radius_str, 0) if radius_str else 0
+        
         # 1. Render Background Color
         bg_color = box.node.style.get("background-color")
         if bg_color and bg_color.lower() != "transparent":
-            self.canvas.create_rectangle(
-                box.x, box.y, box.x + box.width, box.y + box.height,
-                fill=bg_color, outline=""
-            )
+            if radius > 0:
+                self._draw_rounded_rect(box.x, box.y, box.x + box.width, box.y + box.height, radius=radius, fill=bg_color)
+            else:
+                self.canvas.create_rectangle(
+                    box.x, box.y, box.x + box.width, box.y + box.height,
+                    fill=bg_color, outline=""
+                )
             
         # 1b. Render Borders (Outlines)
         border_str = box.node.style.get("border")
@@ -728,12 +960,13 @@ class BrowserTab(ttk.Frame):
                 border_c = box.node.style.get("border-color", "black")
                 
         if border_w > 0 and border_c:
-            # Offset the rectangle slightly inward to keep it within the layout boundaries if desired,
-            # or draw it normally. Normally is perfectly fine.
-            self.canvas.create_rectangle(
-                box.x, box.y, box.x + box.width, box.y + box.height,
-                fill="", outline=border_c, width=border_w
-            )
+            if radius > 0:
+                self._draw_rounded_rect(box.x, box.y, box.x + box.width, box.y + box.height, radius=radius, outline=border_c, width=border_w)
+            else:
+                self.canvas.create_rectangle(
+                    box.x, box.y, box.x + box.width, box.y + box.height,
+                    fill="", outline=border_c, width=border_w
+                )
             
         # 2. Render list bullets for <li> elements
         if box.node.tag == "li":
@@ -912,6 +1145,13 @@ class BrowserTab(ttk.Frame):
                             entry.bind("<Return>", lambda e, n=node: self._submit_form(n))
                             self.canvas.create_window(ax, ay, window=entry, width=rw, height=rh, anchor="nw")
                             
+                    elif itype == "inline-block":
+                        child_box = node
+                        # Re-run layout at the absolute canvas ax, ay offsets!
+                        # This shifts all nested children's coordinates to render inside the column!
+                        layout.compute_layout(child_box, ax, ay, rw, self.main_browser.measurer)
+                        self._render_box(child_box)
+
                     elif itype == "hr":
                         # Render division line
                         color = style.get("color", "#ccc")
@@ -919,6 +1159,9 @@ class BrowserTab(ttk.Frame):
                         
         # Recursive pass
         for child in box.children:
+            # Skip child elements laid out horizontally in lines to prevent double drawing
+            if child.node.style.get("display") == "inline-block" or child.node.attributes.get("class", "") == "col":
+                continue
             self._render_box(child)
 
     def _find_link_ancestor(self, node: parser.HTMLNode) -> Tuple[bool, str]:
@@ -940,101 +1183,7 @@ class BrowserTab(ttk.Frame):
         # Trigger layout on width resizing boundaries
         if abs(event.width - self.last_width) > 10:
             self.last_width = event.width
-            # Debounce resize slightly or run immediately
             self.trigger_layout()
-
-    def on_link_enter(self, event):
-        item = self.canvas.find_withtag("current")
-        tags = self.canvas.gettags(item)
-        link_tag = [t for t in tags if t.startswith("link_")]
-        if link_tag:
-            try:
-                link_id = int(link_tag[0].split("_")[1])
-                href = self.link_map.get(link_id, "")
-                # Resolve full path info
-                full_url = urllib.parse.urljoin(self.current_url, href)
-                self.main_browser.status_bar.config(text=f"Navigate to: {full_url}")
-                self.canvas.config(cursor="hand2")
-            except ValueError:
-                pass
-
-    def on_link_leave(self, event):
-        self.main_browser.status_bar.config(text="Done")
-        self.canvas.config(cursor="")
-
-    def on_link_click(self, event):
-        item = self.canvas.find_withtag("current")
-        tags = self.canvas.gettags(item)
-        link_tag = [t for t in tags if t.startswith("link_")]
-        if link_tag:
-            try:
-                link_id = int(link_tag[0].split("_")[1])
-                href = self.link_map.get(link_id, "")
-                target_url = urllib.parse.urljoin(self.current_url, href)
-                self.navigate_to(target_url)
-            except ValueError:
-                pass
-
-    def _submit_form(self, trigger_node: parser.HTMLNode):
-        # 1. Walk up to find enclosing <form>
-        form_node = None
-        curr = trigger_node
-        while curr:
-            if curr.tag == "form":
-                form_node = curr
-                break
-            curr = curr.parent
-            
-        if not form_node:
-            return
-            
-        # 2. Extract action and method
-        action = form_node.attributes.get("action", "")
-        method = form_node.attributes.get("method", "GET").upper()
-        
-        # 3. Recursively find all inputs inside this form
-        form_inputs = []
-        def find_inputs(node):
-            if node.tag in ("input", "textarea", "select"):
-                form_inputs.append(node)
-            for child in node.children:
-                find_inputs(child)
-        find_inputs(form_node)
-        
-        # 4. Extract values from live Entries
-        params = {}
-        for inp in form_inputs:
-            name = inp.attributes.get("name")
-            if not name:
-                continue
-                
-            inp_type = inp.attributes.get("type", "text").lower()
-            if inp_type == "submit":
-                continue
-                
-            val = ""
-            if inp in self.form_entries:
-                val = self.form_entries[inp].get()
-            else:
-                val = inp.attributes.get("value", "")
-                
-            params[name] = val
-            
-        # 5. Form query string
-        query_string = urllib.parse.urlencode(params)
-        
-        # 6. Resolve target URL
-        target_url = urllib.parse.urljoin(self.current_url, action)
-        
-        # 7. Format parameters based on GET/POST
-        if query_string:
-            if "?" in target_url:
-                target_url += "&" + query_string
-            else:
-                target_url += "?" + query_string
-                
-        # 8. Trigger navigation
-        self.navigate_to(target_url)
 
     def on_select_start(self, event):
         self.select_start_x = self.canvas.canvasx(event.x)
@@ -1095,6 +1244,89 @@ class BrowserTab(ttk.Frame):
             self.clipboard_clear()
             self.clipboard_append(self.selected_text_content)
             self.main_browser.status_bar.config(text="Selection copied to clipboard!")
+
+    def on_link_enter(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                full_url = urllib.parse.urljoin(self.current_url, href)
+                self.main_browser.status_bar.config(text=f"Navigate to: {full_url}")
+                self.canvas.config(cursor="hand2")
+            except ValueError:
+                pass
+
+    def on_link_leave(self, event):
+        self.main_browser.status_bar.config(text="Done")
+        self.canvas.config(cursor="")
+
+    def on_link_click(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                target_url = urllib.parse.urljoin(self.current_url, href)
+                self.navigate_to(target_url)
+            except ValueError:
+                pass
+
+    def _submit_form(self, trigger_node: parser.HTMLNode):
+        form_node = None
+        curr = trigger_node
+        while curr:
+            if curr.tag == "form":
+                form_node = curr
+                break
+            curr = curr.parent
+            
+        if not form_node:
+            return
+            
+        action = form_node.attributes.get("action", "")
+        method = form_node.attributes.get("method", "GET").upper()
+        
+        form_inputs = []
+        def find_inputs(node):
+            if node.tag in ("input", "textarea", "select"):
+                form_inputs.append(node)
+            for child in node.children:
+                find_inputs(child)
+        find_inputs(form_node)
+        
+        params = {}
+        for inp in form_inputs:
+            name = inp.attributes.get("name")
+            if not name:
+                continue
+                
+            inp_type = inp.attributes.get("type", "text").lower()
+            if inp_type == "submit":
+                continue
+                
+            val = ""
+            if inp in self.form_entries:
+                val = self.form_entries[inp].get()
+            else:
+                val = inp.attributes.get("value", "")
+                
+            params[name] = val
+            
+        query_string = urllib.parse.urlencode(params)
+        target_url = urllib.parse.urljoin(self.current_url, action)
+        
+        if query_string:
+            if "?" in target_url:
+                target_url += "&" + query_string
+            else:
+                target_url += "?" + query_string
+                
+        self.navigate_to(target_url)
 
 
 class DevToolsFrame(ttk.Frame):
@@ -1294,7 +1526,7 @@ class SurfGambitApp:
         # Main split paned layout (Split Viewport Frame / DevTools Panel)
         self.paned_window = tk.PanedWindow(self.root, orient="horizontal", bd=0, sashwidth=4, bg="#2d2d2d")
         self.paned_window.pack(fill="both", expand=True)
-        
+
         # 4. Viewport frame container (Holds active BrowserTab frames dynamically parented to PanedWindow)
         self.viewport_frame = tk.Frame(self.paned_window, bg="white")
         self.paned_window.add(self.viewport_frame)
