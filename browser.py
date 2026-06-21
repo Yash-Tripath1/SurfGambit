@@ -1708,7 +1708,7 @@ class SurfGambitApp:
         if self.devtools_visible:
             self.devtools_panel.refresh_devtools(tab)
             
-        # Repaint tab bar names dynamically on titles arrival\
+        # Repaint tab bar names dynamically on titles arrival
         self.update_tab_bar()
 
     def show_loading_spinner(self, is_loading: bool):
