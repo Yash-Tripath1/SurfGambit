@@ -2,14 +2,15 @@ import socket
 import ssl
 import urllib.parse
 import gzip
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 
 class NetworkResponse:
-    def __init__(self, status_code: int, headers: Dict[str, str], body: bytes, url: str):
+    def __init__(self, status_code: int, headers: Dict[str, str], body: bytes, url: str, raw_headers: Optional[List[Tuple[str, str]]] = None):
         self.status_code = status_code
         self.headers = headers
         self.body = body
         self.url = url
+        self.raw_headers = raw_headers or []
         self.text = self._decode_body()
 
     def _decode_body(self) -> str:
@@ -76,6 +77,13 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
             "Accept-Encoding": "gzip",
             "Connection": "close",
         }
+        
+        # Inject matching active cookies from jar
+        import cookies
+        cookie_header = cookies.jar.get_cookie_header(current_url)
+        if cookie_header:
+            headers["Cookie"] = cookie_header
+            
         if headers_override:
             headers.update(headers_override)
 
@@ -126,10 +134,18 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
             raise RuntimeError(f"Non-integer HTTP status code: {status_parts[1]}")
 
         response_headers = {}
+        raw_headers = []
         for line in header_lines[1:]:
             if ":" in line:
                 k, v = line.split(":", 1)
-                response_headers[k.strip().lower()] = v.strip()
+                name = k.strip()
+                val = v.strip()
+                response_headers[name.lower()] = val
+                raw_headers.append((name, val))
+                
+        # Extract received cookies and save in cookie jar
+        import cookies
+        cookies.jar.extract_cookies(current_url, raw_headers)
 
         # Handle Chunked Encoding
         if response_headers.get("transfer-encoding", "").lower() == "chunked":
@@ -152,7 +168,7 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
                 continue
 
         # No redirect or redirect failed, return response
-        return NetworkResponse(status_code, response_headers, bytes(body_raw), current_url)
+        return NetworkResponse(status_code, response_headers, bytes(body_raw), current_url, raw_headers)
 
     raise RuntimeError("Too many redirects")
 
