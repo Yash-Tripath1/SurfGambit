@@ -113,6 +113,9 @@ WELCOME_HTML = """
         <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
     </div>
 
+    <!-- Dynamic Quick Dial Bookmarks Grid using custom inline-blocks! -->
+    <div id="quick-dial-container"></div>
+
     <div class="card">
         <h2>🚀 Deeply Custom Architecture</h2>
         <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
@@ -365,6 +368,34 @@ class BrowserTab(tk.Frame):
             </div>
             """
             welcome_html = welcome_html.replace('<h1>SurfGambit Browser</h1>', f'<h1>SurfGambit Browser</h1>{login_link}')
+            
+        # Dynamically inject Bookmarks Quick Dial grid if saved bookmarks exist
+        hub = load_hub_data()
+        bookmarks_grid_html = ""
+        if hub["bookmarks"]:
+            grid_items = ""
+            for bm in hub["bookmarks"][:4]: # show top 4 saved bookmarks
+                b_url = bm["url"]
+                parsed_b = urllib.parse.urlparse(b_url)
+                b_name = parsed_b.hostname or b_url
+                if b_name.startswith("www."):
+                    b_name = b_name[4:]
+                if len(b_name) > 15:
+                    b_name = b_name[:12] + "..."
+                grid_items += f"""
+                <div class="col" style="display: inline-block; width: 135px; background-color: #0d0d0d; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 6px; text-align: center; height: 60px;">
+                    <span style="font-size: 14px;">⭐</span><br>
+                    <a href="{b_url}" style="font-size: 11px; text-decoration: none; color: #00adb5;">{b_name}</a>
+                </div>
+                """
+            bookmarks_grid_html = f"""
+            <div style="text-align: center; margin: 15px auto; max-width: 650px;">
+                <p style="color: #666; font-size: 12px; margin-bottom: 10px; font-weight: bold; text-align: center;">⚡ QUICK DIAL SHORTCUTS</p>
+                {grid_items}
+            </div>
+            """
+            
+        welcome_html = welcome_html.replace('<div id="quick-dial-container"></div>', bookmarks_grid_html)
             
         self.raw_html = welcome_html
         self.dom_tree = parser.HTMLParser(self.raw_html).parse()
