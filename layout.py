@@ -155,16 +155,25 @@ def build_layout_tree(node: HTMLNode) -> Optional[LayoutBox]:
         if child_box:
             box.children.append(child_box)
             
+    # If this is the root of the layout tree, propagate block upgrades top-down
+    if node.tag == "html" or not node.parent:
+        _propagate_block_upgrades(box)
+            
+    return box
+
+def _propagate_block_upgrades(box: LayoutBox):
     # Anonymous Block Box simulation:
     # If this container is a block, and has ANY block-level child, then force ALL child layout boxes 
     # to be block-level. This prevents mixed-mode horizontal text flow overlaps (fundamental CSS rule).
     has_block_child = any(c.box_type == "block" for c in box.children)
-    if box_type == "block" and has_block_child:
+    if box.box_type == "block" and has_block_child:
         for child_box in box.children:
             if child_box.box_type == "inline":
                 child_box.box_type = "block"
-            
-    return box
+                
+    # Recursively propagate down the tree top-down
+    for child in box.children:
+        _propagate_block_upgrades(child)
 
 def parse_px_val(val_str: str, default: int = 0) -> int:
     if not val_str:

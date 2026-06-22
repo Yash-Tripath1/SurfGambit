@@ -118,6 +118,8 @@ WELCOME_HTML = """
         <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
         <div class="tech-list">
             - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
+            - [cookies.py]: Custom stateful Cookie Jar parsing and injecting active sessions.<br>
+            - [accounts.py]: Secure salted SHA-256 cryptographies for primitive local accounts.<br>
             - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
             - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
         </div>
@@ -333,14 +335,43 @@ class BrowserTab(tk.Frame):
 
     def load_welcome_page(self):
         self.current_url = "surfgambit://welcome"
-        self.raw_html = WELCOME_HTML
+        
+        # Check active session status via Cookies
+        import cookies
+        user = None
+        cookie_header = cookies.jar.get_cookie_header("https://surfgambit.com")
+        if cookie_header:
+            parts = cookie_header.split(";")
+            for part in parts:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    if k.strip() == "session_user":
+                        user = v.strip()
+                        break
+                        
+        welcome_html = WELCOME_HTML
+        if user:
+            greeting = f"""
+            <div style="text-align: center; margin-top: 10px; margin-bottom: 5px;">
+                <p style="color: #00adb5; font-size: 16px; font-weight: bold;">👾 Welcome back, {user}! (Logged in via Secure Cookie)</p>
+                <a href="surfgambit://logout" style="font-size: 13px; color: #ff5722; font-weight: bold;">Sign Out</a>
+            </div>
+            """
+            welcome_html = welcome_html.replace('<h1>SurfGambit Browser</h1>', f'<h1>SurfGambit Browser</h1>{greeting}')
+        else:
+            login_link = """
+            <div style="text-align: center; margin-top: 10px; margin-bottom: 5px;">
+                <a href="surfgambit://login" style="font-size: 14px; color: #00adb5; font-weight: bold;">👤 Sign In / Register</a>
+            </div>
+            """
+            welcome_html = welcome_html.replace('<h1>SurfGambit Browser</h1>', f'<h1>SurfGambit Browser</h1>{login_link}')
+            
+        self.raw_html = welcome_html
         self.dom_tree = parser.HTMLParser(self.raw_html).parse()
         self.css_rules = parser.get_style_sheets(self.dom_tree)
         parser.resolve_styles(self.dom_tree, self.css_rules)
         self._start_image_downloads()
         self.trigger_layout()
-
-
 
     def navigate_to(self, url: str, is_history_action=False):
         url = url.strip()
@@ -375,6 +406,164 @@ class BrowserTab(tk.Frame):
             self.main_browser.status_bar.config(text=f"Streaming download for {os.path.basename(parsed_path)}...")
             threading.Thread(target=self._async_download_file, args=(url,), daemon=True).start()
             self.navigate_to("surfgambit://downloads", is_history_action=True)
+            return
+
+        # Handle Registration Form Submissions
+        if url.startswith("surfgambit://register-submit"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            username = params.get("reg_username", [""])[0]
+            password = params.get("reg_password", [""])[0]
+            
+            import accounts
+            success, msg = accounts.register_user(username, password)
+            if success:
+                self.navigate_to(f"surfgambit://login?msg={urllib.parse.quote(msg)}", is_history_action=True)
+            else:
+                self.navigate_to(f"surfgambit://register?err={urllib.parse.quote(msg)}", is_history_action=True)
+            return
+
+        # Handle Login Form Submissions
+        if url.startswith("surfgambit://login-submit"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            username = params.get("login_username", [""])[0]
+            password = params.get("login_password", [""])[0]
+            
+            import accounts
+            import cookies
+            import secrets
+            
+            if accounts.verify_user(username, password):
+                session_id = secrets.token_hex(32)
+                # Set session cookies in custom cookies manager
+                cookies.jar.extract_cookies("https://surfgambit.com", [
+                    ("Set-Cookie", f"session_user={username}; Domain=.surfgambit.com; Path=/; Max-Age=3600"),
+                    ("Set-Cookie", f"session_token={session_id}; Domain=.surfgambit.com; Path=/; Max-Age=3600")
+                ])
+                self.navigate_to("surfgambit://welcome", is_history_action=True)
+            else:
+                msg = "Invalid username or password!"
+                self.navigate_to(f"surfgambit://login?err={urllib.parse.quote(msg)}", is_history_action=True)
+            return
+
+        # Handle Logout Actions
+        if url == "surfgambit://logout":
+            import cookies
+            # Erase cookies for surfgambit.com
+            cookies.jar.cookies = [c for c in cookies.jar.cookies if c.domain != ".surfgambit.com" and c.domain != "surfgambit.com"]
+            cookies.jar.save()
+            self.navigate_to("surfgambit://welcome", is_history_action=True)
+            return
+
+        # Render Registration page
+        if url.startswith("surfgambit://register"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            err_msg = params.get("err", [""])[0]
+            err_html = f'<p style="color: #ff5722; font-weight: bold; text-align: center;">🛑 {err_msg}</p>' if err_msg else ""
+            
+            self.current_url = url
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .nav {{ margin-bottom: 25px; }}
+                    input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Hub</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a>
+                </div>
+                
+                <div class="card">
+                    <h2 style="color: #00adb5; margin-top: 0px; margin-bottom: 20px; text-align: center;">👤 Create Secure Account</h2>
+                    {err_html}
+                    <form action="surfgambit://register-submit" method="GET">
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Username</p>
+                        <input type="text" name="reg_username" placeholder="Enter username"><br>
+                        
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Password</p>
+                        <input type="password" name="reg_password" placeholder="Enter password"><br>
+                        
+                        <button type="submit" style="background-color: #00adb5; color: white; border: none; font-weight: bold; cursor: pointer; height: 32px; margin-top: 10px;">Create Account</button>
+                    </form>
+                    <p style="font-size: 13px; text-align: center; margin-top: 15px; color: #888;">Already have an account? <a href="surfgambit://login">Sign In</a></p>
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
+            return
+
+        # Render Login page
+        if url.startswith("surfgambit://login"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            err_msg = params.get("err", [""])[0]
+            success_msg = params.get("msg", [""])[0]
+            
+            banner_html = ""
+            if err_msg:
+                banner_html = f'<p style="color: #ff5722; font-weight: bold; text-align: center;">🛑 {err_msg}</p>'
+            elif success_msg:
+                banner_html = f'<p style="color: #4caf50; font-weight: bold; text-align: center;">💚 {success_msg}</p>'
+                
+            self.current_url = url
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .nav {{ margin-bottom: 25px; }}
+                    input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Hub</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a>
+                </div>
+                
+                <div class="card">
+                    <h2 style="color: #00adb5; margin-top: 0px; margin-bottom: 20px; text-align: center;">🔑 Sign In</h2>
+                    {banner_html}
+                    <form action="surfgambit://login-submit" method="GET">
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Username</p>
+                        <input type="text" name="login_username" placeholder="Enter username"><br>
+                        
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Password</p>
+                        <input type="password" name="login_password" placeholder="Enter password"><br>
+                        
+                        <button type="submit" style="background-color: #00adb5; color: white; border: none; font-weight: bold; cursor: pointer; height: 32px; margin-top: 10px;">Sign In</button>
+                    </form>
+                    <p style="font-size: 13px; text-align: center; margin-top: 15px; color: #888;">Don't have an account? <a href="surfgambit://register">Create one</a></p>
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
             return
 
         # Handle Internal Command Actions
@@ -418,9 +607,9 @@ class BrowserTab(tk.Frame):
             <html>
             <head>
                 <style>
-                    body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
                     h1 {{ color: #00adb5; }}
-                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
+                    .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
                     .item {{ margin-bottom: 15px; border-bottom: 1px solid #222; padding-bottom: 10px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .url {{ color: #888; font-size: 12px; font-family: monospace; }}
@@ -477,9 +666,9 @@ class BrowserTab(tk.Frame):
             <html>
             <head>
                 <style>
-                    body {{ font-family: sans-serif; background-color: #121212; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
                     h1 {{ color: #00adb5; }}
-                    .card {{ background-color: #1e1e1e; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
+                    .card {{ background-color: #0d0d0d; border: 1px solid #333; padding: 25px; margin: 20px auto; max-width: 650px; text-align: left; border-radius: 8px; }}
                     .item {{ margin-bottom: 12px; font-size: 14px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
@@ -1153,7 +1342,101 @@ class BrowserTab(tk.Frame):
         # Trigger layout on width resizing boundaries
         if abs(event.width - self.last_width) > 10:
             self.last_width = event.width
+            # Debounce resize slightly or run immediately
             self.trigger_layout()
+
+    def on_link_enter(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                # Resolve full path info
+                full_url = urllib.parse.urljoin(self.current_url, href)
+                self.main_browser.status_bar.config(text=f"Navigate to: {full_url}")
+                self.canvas.config(cursor="hand2")
+            except ValueError:
+                pass
+
+    def on_link_leave(self, event):
+        self.main_browser.status_bar.config(text="Done")
+        self.canvas.config(cursor="")
+
+    def on_link_click(self, event):
+        item = self.canvas.find_withtag("current")
+        tags = self.canvas.gettags(item)
+        link_tag = [t for t in tags if t.startswith("link_")]
+        if link_tag:
+            try:
+                link_id = int(link_tag[0].split("_")[1])
+                href = self.link_map.get(link_id, "")
+                target_url = urllib.parse.urljoin(self.current_url, href)
+                self.navigate_to(target_url)
+            except ValueError:
+                pass
+
+    def _submit_form(self, trigger_node: parser.HTMLNode):
+        # 1. Walk up to find enclosing <form>
+        form_node = None
+        curr = trigger_node
+        while curr:
+            if curr.tag == "form":
+                form_node = curr
+                break
+            curr = curr.parent
+            
+        if not form_node:
+            return
+            
+        # 2. Extract action and method
+        action = form_node.attributes.get("action", "")
+        method = form_node.attributes.get("method", "GET").upper()
+        
+        # 3. Recursively find all inputs inside this form
+        form_inputs = []
+        def find_inputs(node):
+            if node.tag in ("input", "textarea", "select"):
+                form_inputs.append(node)
+            for child in node.children:
+                find_inputs(child)
+        find_inputs(form_node)
+        
+        # 4. Extract values from live Entries
+        params = {}
+        for inp in form_inputs:
+            name = inp.attributes.get("name")
+            if not name:
+                continue
+                
+            inp_type = inp.attributes.get("type", "text").lower()
+            if inp_type == "submit":
+                continue
+                
+            val = ""
+            if inp in self.form_entries:
+                val = self.form_entries[inp].get()
+            else:
+                val = inp.attributes.get("value", "")
+                
+            params[name] = val
+            
+        # 5. Form query string
+        query_string = urllib.parse.urlencode(params)
+        
+        # 6. Resolve target URL
+        target_url = urllib.parse.urljoin(self.current_url, action)
+        
+        # 7. Format parameters based on GET/POST
+        if query_string:
+            if "?" in target_url:
+                target_url += "&" + query_string
+            else:
+                target_url += "?" + query_string
+                
+        # 8. Trigger navigation
+        self.navigate_to(target_url)
 
     def on_select_start(self, event):
         self.select_start_x = self.canvas.canvasx(event.x)
@@ -1214,89 +1497,6 @@ class BrowserTab(tk.Frame):
             self.clipboard_clear()
             self.clipboard_append(self.selected_text_content)
             self.main_browser.status_bar.config(text="Selection copied to clipboard!")
-
-    def on_link_enter(self, event):
-        item = self.canvas.find_withtag("current")
-        tags = self.canvas.gettags(item)
-        link_tag = [t for t in tags if t.startswith("link_")]
-        if link_tag:
-            try:
-                link_id = int(link_tag[0].split("_")[1])
-                href = self.link_map.get(link_id, "")
-                full_url = urllib.parse.urljoin(self.current_url, href)
-                self.main_browser.status_bar.config(text=f"Navigate to: {full_url}")
-                self.canvas.config(cursor="hand2")
-            except ValueError:
-                pass
-
-    def on_link_leave(self, event):
-        self.main_browser.status_bar.config(text="Done")
-        self.canvas.config(cursor="")
-
-    def on_link_click(self, event):
-        item = self.canvas.find_withtag("current")
-        tags = self.canvas.gettags(item)
-        link_tag = [t for t in tags if t.startswith("link_")]
-        if link_tag:
-            try:
-                link_id = int(link_tag[0].split("_")[1])
-                href = self.link_map.get(link_id, "")
-                target_url = urllib.parse.urljoin(self.current_url, href)
-                self.navigate_to(target_url)
-            except ValueError:
-                pass
-
-    def _submit_form(self, trigger_node: parser.HTMLNode):
-        form_node = None
-        curr = trigger_node
-        while curr:
-            if curr.tag == "form":
-                form_node = curr
-                break
-            curr = curr.parent
-            
-        if not form_node:
-            return
-            
-        action = form_node.attributes.get("action", "")
-        method = form_node.attributes.get("method", "GET").upper()
-        
-        form_inputs = []
-        def find_inputs(node):
-            if node.tag in ("input", "textarea", "select"):
-                form_inputs.append(node)
-            for child in node.children:
-                find_inputs(child)
-        find_inputs(form_node)
-        
-        params = {}
-        for inp in form_inputs:
-            name = inp.attributes.get("name")
-            if not name:
-                continue
-                
-            inp_type = inp.attributes.get("type", "text").lower()
-            if inp_type == "submit":
-                continue
-                
-            val = ""
-            if inp in self.form_entries:
-                val = self.form_entries[inp].get()
-            else:
-                val = inp.attributes.get("value", "")
-                
-            params[name] = val
-            
-        query_string = urllib.parse.urlencode(params)
-        target_url = urllib.parse.urljoin(self.current_url, action)
-        
-        if query_string:
-            if "?" in target_url:
-                target_url += "&" + query_string
-            else:
-                target_url += "?" + query_string
-                
-        self.navigate_to(target_url)
 
 
 class DevToolsFrame(ttk.Frame):
@@ -1685,8 +1885,6 @@ class SurfGambitApp:
             if tab:
                 self.devtools_panel.refresh_devtools(tab)
 
-
-
     def on_tab_changed(self, event):
         tab = self.get_active_tab()
         if tab:
@@ -1708,7 +1906,7 @@ class SurfGambitApp:
         if self.devtools_visible:
             self.devtools_panel.refresh_devtools(tab)
             
-        # Repaint tab bar names dynamically on titles arrival [gambit is good]
+        # Repaint tab bar names dynamically on titles arrival
         self.update_tab_bar()
 
     def show_loading_spinner(self, is_loading: bool):

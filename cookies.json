@@ -1,0 +1,56 @@
+[
+    {
+        "name": "AEC",
+        "value": "AdJVEav9Kg4khzVNiPEsibhhtccXV-9ADpZisntI4m9rP5sXFJLIUiinug",
+        "domain": ".google.com",
+        "path": "/",
+        "expires": 1797620926.0,
+        "secure": true,
+        "httponly": true
+    },
+    {
+        "name": "__Secure-BUCKET",
+        "value": "CAc",
+        "domain": ".google.com",
+        "path": "/",
+        "expires": 1797620926.0,
+        "secure": true,
+        "httponly": true
+    },
+    {
+        "name": "NID",
+        "value": "532=dXAKz4YFUqma6ZLIV6JA2c39MQEapCYb8BzWFTO7ws4WEE1hQoOxVLzVxQnNDYIqV4-BiIQp_ju2V6u0Uyyti6nNLg-uU9dVFJUOELFptlZxKOPWVkL0N9y55IwIwJzmSmr-mbnbg15pvK1rbpZKky4zpt2YZGf3uCyOBjUzsklZzrFsSJkkGmo1ftI6Ym5-2n9bBLNISHD_poaADBRex0I",
+        "domain": ".google.com",
+        "path": "/",
+        "expires": 1797880126.0,
+        "secure": false,
+        "httponly": true
+    },
+    {
+        "name": "__Host-GAPS",
+        "value": "1:3ztEC2AHJMnzTlxxFaRHEeSDNLdzqg:UtmK-SzT6rWBIZE4",
+        "domain": "accounts.google.com",
+        "path": "/",
+        "expires": 1845141719.0,
+        "secure": true,
+        "httponly": true
+    },
+    {
+        "name": "session_user",
+        "value": "yash.trip.8",
+        "domain": ".surfgambit.com",
+        "path": "/",
+        "expires": 1782155149.2369604,
+        "secure": false,
+        "httponly": false
+    },
+    {
+        "name": "session_token",
+        "value": "51d13e973493a227a3b06a9e12f5e0c284877b839aca321be02c5ed1c3e7bf65",
+        "domain": ".surfgambit.com",
+        "path": "/",
+        "expires": 1782155149.236995,
+        "secure": false,
+        "httponly": false
+    }
+]

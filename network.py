@@ -55,7 +55,7 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
 
         # Establish socket connection
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10.0)
+        sock.settimeout(3.0) # Short, responsive connection timeout
 
         try:
             sock.connect((host, port))
@@ -65,6 +65,8 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
                 # and images load correctly even if the OS certificate store is outdated.
                 ctx = ssl._create_unverified_context()
                 sock = ctx.wrap_socket(sock, server_hostname=host)
+                # Enforce secure socket timeout AFTER wrapping (prevents indefinite blocking/hangs on Windows)
+                sock.settimeout(3.0)
         except Exception as e:
             sock.close()
             raise RuntimeError(f"Connection failed to {host}:{port}. Error: {e}")
