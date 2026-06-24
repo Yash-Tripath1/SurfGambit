@@ -2,6 +2,7 @@ import socket
 import ssl
 import urllib.parse
 import gzip
+import os
 from typing import Dict, Tuple, Optional, List
 
 class NetworkResponse:
@@ -71,10 +72,20 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
             sock.close()
             raise RuntimeError(f"Connection failed to {host}:{port}. Error: {e}")
 
+        # Load dynamic spoofed User-Agent from local settings.json
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        if os.path.exists("settings.json"):
+            try:
+                with open("settings.json", "r") as f:
+                    s = json.load(f)
+                    user_agent = s.get("user_agent", user_agent)
+            except Exception:
+                pass
+
         # Construct raw HTTP/1.1 request
         headers = {
             "Host": f"{host}:{port}" if parsed.port else host,
-            "User-Agent": "SurfGambit/1.1 (Python Custom Web Browser; Agent-Vibe)",
+            "User-Agent": user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Encoding": "gzip",
             "Connection": "close",

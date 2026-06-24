@@ -15,6 +15,29 @@ import layout
 
 HUB_FILE = "bookmarks.json"
 DOWNLOADS_FILE = "downloads.json"
+SETTINGS_FILE = "settings.json"
+
+DEFAULT_SETTINGS = {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "search_engine": "DuckDuckGo",
+    "mascot_active": "on"
+}
+
+def load_settings() -> dict:
+    if not os.path.exists(SETTINGS_FILE):
+        return DEFAULT_SETTINGS.copy()
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return {**DEFAULT_SETTINGS, **json.load(f)}
+    except Exception:
+        return DEFAULT_SETTINGS.copy()
+
+def save_settings(data: dict):
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception:
+        pass
 
 def load_hub_data() -> Dict[str, List[Dict[str, str]]]:
     if not os.path.exists(HUB_FILE):
@@ -111,7 +134,8 @@ WELCOME_HTML = """
     <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
         <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
         <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">📜 History Log</a> |
-        <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
+        <a href="surfgambit://downloads" style="margin-right: 15px; font-weight: bold;">⬇️ Downloads</a> |
+        <a href="surfgambit://settings" style="font-weight: bold;">⚙️ Settings</a>
     </div>
 
     <!-- Dynamic Quick Dial Bookmarks Grid using custom inline-blocks! -->
@@ -227,13 +251,28 @@ class RetroAlienInvader(tk.Canvas):
         self.animate()
 
     def animate(self):
+        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
+        # This prevents "invalid command name" after-script crashes when navigating.
         if not self.winfo_exists():
             return
             
+        # Check settings to see if mascot animation is enabled
+        settings = load_settings()
+        if settings.get("mascot_active", "on") != "on":
+            self.delete("all")
+            # draw static frame 0
+            self._draw_frame(0)
+            return
+            
         self.delete("all")
-        frame = self.frames[self.current_frame]
+        self._draw_frame(self.current_frame)
+                    
+        self.current_frame = (self.current_frame + 1) % len(self.frames)
+        self.after(250, self.animate) # slightly faster dance speed!
+
+    def _draw_frame(self, frame_idx):
+        frame = self.frames[frame_idx]
         pixel_size = self.size / 8
-        
         for r, row in enumerate(frame):
             for c, char in enumerate(row):
                 if char == "X":
@@ -242,9 +281,6 @@ class RetroAlienInvader(tk.Canvas):
                     x2 = x1 + pixel_size
                     y2 = y1 + pixel_size
                     self.create_rectangle(x1, y1, x2, y2, fill=self.color, outline="")
-                    
-        self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.after(250, self.animate)
 
     def on_hover_enter(self, event):
         if self.main_app:
@@ -488,6 +524,35 @@ class BrowserTab(tk.Frame):
                 self.navigate_to(f"surfgambit://login?err={urllib.parse.quote(msg)}", is_history_action=True)
             return
 
+        # Handle Settings Form Submissions
+        if url.startswith("surfgambit://settings-save"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            ua_choice = params.get("ua", ["Chrome"])[0]
+            se_choice = params.get("se", ["DuckDuckGo"])[0]
+            mascot_choice = params.get("mascot", ["on"])[0]
+            
+            # Map dynamic User-Agents
+            ua_presets = {
+                "Chrome": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Safari": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                "Nokia": "Nokia5110/1.0 (lightweight; no-js)"
+            }
+            user_agent = ua_presets.get(ua_choice, ua_presets["Chrome"])
+            
+            settings = {
+                "user_agent_name": ua_choice,
+                "user_agent": user_agent,
+                "search_engine": se_choice,
+                "mascot_active": mascot_choice
+            }
+            save_settings(settings)
+            
+            # Propagate default search engine dropdown value
+            self.main_browser.search_engine_combo.set(se_choice)
+            self.navigate_to("surfgambit://settings?msg=Settings%20Saved%20Successfully%20⚙️", is_history_action=True)
+            return
+
         # Handle Logout Actions
         if url == "surfgambit://logout":
             import cookies
@@ -495,6 +560,66 @@ class BrowserTab(tk.Frame):
             cookies.jar.cookies = [c for c in cookies.jar.cookies if c.domain != ".surfgambit.com" and c.domain != "surfgambit.com"]
             cookies.jar.save()
             self.navigate_to("surfgambit://welcome", is_history_action=True)
+            return
+
+        # Render Settings panel
+        if url.startswith("surfgambit://settings"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            success_msg = params.get("msg", [""])[0]
+            
+            banner_html = f'<p style="color: #4caf50; font-weight: bold; text-align: center;">💚 {success_msg}</p>' if success_msg else ""
+            
+            s = load_settings()
+            ua_val = s.get("user_agent_name", "Chrome")
+            se_val = s.get("search_engine", "DuckDuckGo")
+            mascot_val = s.get("mascot_active", "on")
+            
+            self.current_url = url
+            self.raw_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
+                    h1 {{ color: #00adb5; }}
+                    .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 500px; text-align: left; border-radius: 8px; }}
+                    a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+                    .nav {{ margin-bottom: 25px; }}
+                    input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <h1>SurfGambit Settings</h1>
+                <div class="nav">
+                    <a href="surfgambit://welcome">Home</a> | 
+                    <a href="surfgambit://bookmarks">Bookmarks</a> | 
+                    <a href="surfgambit://history">History</a>
+                </div>
+                
+                <div class="card">
+                    <h2 style="color: #00adb5; margin-top: 0px; margin-bottom: 20px; text-align: center;">⚙️ Browser Configuration</h2>
+                    {banner_html}
+                    <form action="surfgambit://settings-save" method="GET">
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">User-Agent Presets (Chrome, Safari, Nokia)</p>
+                        <input type="text" name="ua" value="{ua_val}"><br>
+                        
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Default Search Engine (Google, DuckDuckGo, Wikipedia)</p>
+                        <input type="text" name="se" value="{se_val}"><br>
+                        
+                        <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Mascot Active (on / off)</p>
+                        <input type="text" name="mascot" value="{mascot_val}"><br>
+                        
+                        <button type="submit" style="background-color: #00adb5; color: white; border: none; font-weight: bold; cursor: pointer; height: 32px; margin-top: 10px;">Save Settings</button>
+                    </form>
+                </div>
+            </body>
+            </html>
+            """
+            self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+            self.css_rules = parser.get_style_sheets(self.dom_tree)
+            parser.resolve_styles(self.dom_tree, self.css_rules)
+            self.trigger_layout()
+            self.main_browser.update_ui_state(self)
             return
 
         # Render Registration page
@@ -514,7 +639,7 @@ class BrowserTab(tk.Frame):
                     .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
-                    input, button, textarea {{ width: 100%; margin-bottom: 15px; border-radius: 4px; }}
+                    input, button, textarea {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
                 </style>
             </head>
             <body>
@@ -572,7 +697,7 @@ class BrowserTab(tk.Frame):
                     .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
-                    input, button, textarea {{ width: 100%; margin-bottom: 15px; border-radius: 4px; }}
+                    input, button, textarea {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
                 </style>
             </head>
             <body>
@@ -976,7 +1101,6 @@ class BrowserTab(tk.Frame):
         act_frame.pack(pady=10)
         
         def handle_auth():
-            username = user_entry_val = user_entry_get = user_lbl_get = user_get = entry_user_get = ""
             user = user_entry.get().strip()
             passwd = pass_entry.get().strip()
             if not user:
@@ -1080,7 +1204,7 @@ class BrowserTab(tk.Frame):
                 <p>SurfGambit was unable to load the requested page:</p>
                 <p class="url">{orig_escape(url)}</p>
                 <p><b>Error Details:</b> {orig_escape(err_msg)}</p>
-                <p style="margin-top: 20px; color: #aaa;">No internet connection? Don't stress, twin—play our offline arcade game while you wait!</p>
+                <p style="margin-top: 20px; color: #aaa;">No internet connection? Don't stress, twin. Play our offline arcade game while you wait!</p>
                 <a href="surfgambit://game" class="btn">👾 PLAY ALIEN DEFENDER</a>
             </div>
         </body>
