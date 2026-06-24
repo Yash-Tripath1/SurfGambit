@@ -7,6 +7,34 @@
     ],
     "history": [
         {
+            "url": "https://www.google.com/httpservice/retry/enablejs?sei=8Q08aqWDPJChseMP0Km7iQc",
+            "time": "22:33:52"
+        },
+        {
+            "url": "https://www.google.com/search?q=meow&gbv=1",
+            "time": "22:33:45"
+        },
+        {
+            "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.catster.com%2Fcat%2Dbehavior%2Ftypes%2Dof%2Dcat%2Dmeows%2F&amp;rut=b3e1d6f61c8a875ee8d053b852fb11d3bf8fc4ee9bf9980cd0e43d5aea3846b1",
+            "time": "22:33:37"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=meow",
+            "time": "22:33:31"
+        },
+        {
+            "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FMeow&amp;rut=dfbb8c51caee3a5969ed3b8a63e7d9f1741a2ace01193045f574398ef3d7fabc",
+            "time": "22:33:28"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=meow",
+            "time": "22:33:24"
+        },
+        {
+            "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fm.youtube.com%2Fwatch%3Fv%3DowXEtkF4uB8&amp;rut=81721b0819974bb924a0b004f930e4949b15958799e28d15d4eb5e74fc5f79f4",
+            "time": "22:33:19"
+        },
+        {
             "url": "https://html.duckduckgo.com/html/?q=meow",
             "time": "23:36:06"
         },

@@ -111,8 +111,7 @@ WELCOME_HTML = """
     <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
         <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
         <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">📜 History Log</a> |
-        <a href="surfgambit://downloads" style="margin-right: 15px; font-weight: bold;">⬇️ Downloads</a> |
-        <a href="surfgambit://video" style="font-weight: bold;">🎥 Custom Video Player</a>
+        <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
     </div>
 
     <!-- Dynamic Quick Dial Bookmarks Grid using custom inline-blocks! -->
@@ -124,8 +123,7 @@ WELCOME_HTML = """
         <div class="tech-list">
             - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
             - [cookies.py]: Custom stateful Cookie Jar parsing and injecting active sessions.<br>
-            - [accounts.py]: Secure salted SHA-256 cryptographies for primitive local accounts.<br>
-            - [video.py]: Standalone .sgv (SurfGambit Video) micro-frame 8-bit visual rendering decoders.<br>
+            - [accounts.py]: Secure salted SHA-256 cryptographies and local credential caches.<br>
             - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
             - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
         </div>
@@ -229,8 +227,6 @@ class RetroAlienInvader(tk.Canvas):
         self.animate()
 
     def animate(self):
-        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
-        # This prevents "invalid command name" after-script crashes when navigating.
         if not self.winfo_exists():
             return
             
@@ -248,7 +244,7 @@ class RetroAlienInvader(tk.Canvas):
                     self.create_rectangle(x1, y1, x2, y2, fill=self.color, outline="")
                     
         self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.after(250, self.animate) # slightly faster dance speed!
+        self.after(250, self.animate)
 
     def on_hover_enter(self, event):
         if self.main_app:
@@ -287,13 +283,13 @@ class BrowserTab(tk.Frame):
         
         # Live Forms and Widgets Tracking
         self.canvas_widgets: List[tk.Widget] = []
-        self.form_entries: Dict[parser.HTMLNode, tk.Entry] = {}
+        self.form_entries: Dict[parser.HTMLNode, Any] = {}
         
         # Active Game Reference (👾)
         self.active_game = None
         
-        # Active Media/Video Player Reference (.sgv)
-        self.active_player = None
+        # Local HTTP Basic Auth Session Headers (by Host)
+        self.auth_headers: Dict[str, str] = {}
         
         # Thread lock and active loading control
         self.is_loading = False
@@ -423,11 +419,6 @@ class BrowserTab(tk.Frame):
             self.active_game.stop_game()
             self.active_game = None
             
-        # Shutdown custom SGV video loop if active
-        if self.active_player:
-            self.active_player.stop()
-            self.active_player = None
-            
         # Standardize URL or route to selected Search Engine if it's a search term!
         is_schema = url.startswith("http://") or url.startswith("https://") or url.startswith("surfgambit://")
         
@@ -523,7 +514,7 @@ class BrowserTab(tk.Frame):
                     .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
-                    input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+                    input, button, textarea {{ width: 100%; margin-bottom: 15px; border-radius: 4px; }}
                 </style>
             </head>
             <body>
@@ -581,7 +572,7 @@ class BrowserTab(tk.Frame):
                     .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 450px; text-align: left; border-radius: 8px; }}
                     a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
                     .nav {{ margin-bottom: 25px; }}
-                    input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+                    input, button, textarea {{ width: 100%; margin-bottom: 15px; border-radius: 4px; }}
                 </style>
             </head>
             <body>
@@ -626,22 +617,6 @@ class BrowserTab(tk.Frame):
             import game
             self.active_game = game.SpaceInvaderGame(self.canvas, self.main_browser, self.main_browser.alien)
             self.active_game.start_game()
-            
-            self.main_browser.update_ui_state(self)
-            return
-
-        # Render custom 8-bit SGV Video Player
-        if url == "surfgambit://video":
-            if not is_history_action and self.current_url != url:
-                self.back_stack.append(self.current_url)
-                self.forward_stack.clear()
-            self.current_url = url
-            self.canvas.delete("all")
-            self.canvas.config(bg="#000000")
-            
-            import video
-            self.active_player = video.SGVPlayer(self.canvas, video.LAUNCH_MOVIE, x=140, y=80, scale=24)
-            self.active_player.start()
             
             self.main_browser.update_ui_state(self)
             return
@@ -855,10 +830,16 @@ class BrowserTab(tk.Frame):
         self.loaded_images.clear()
         self.loading_images.clear()
         
+        # Check domain basic authentication cache
+        host = urllib.parse.urlparse(url).hostname
+        headers_override = {}
+        if host and host in self.auth_headers:
+            headers_override["Authorization"] = self.auth_headers[host]
+            
         # Launch non-blocking request background thread
         self.loading_thread = threading.Thread(
             target=self._async_fetch_and_parse,
-            args=(url, is_history_action),
+            args=(url, is_history_action, headers_override),
             daemon=True
         )
         self.loading_thread.start()
@@ -873,8 +854,14 @@ class BrowserTab(tk.Frame):
             dw_list.insert(0, {"name": filename, "url": url, "status": "Downloading...", "time": time_s})
             save_downloads_data(dw_list)
             
+            # Check basic auth for downloads too
+            host = urllib.parse.urlparse(url).hostname
+            headers_override = {}
+            if host and host in self.auth_headers:
+                headers_override["Authorization"] = self.auth_headers[host]
+                
             # Trigger download over raw socket
-            resp = network.request(url)
+            resp = network.request(url, headers_override=headers_override)
             
             # Resolve actual Windows/system downloads path dynamically (e.g. C:\Users\tripa\Downloads)
             system_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -912,13 +899,25 @@ class BrowserTab(tk.Frame):
         if self.current_url == "surfgambit://downloads":
             self.navigate_to("surfgambit://downloads", is_history_action=True)
 
-    def _async_fetch_and_parse(self, url: str, is_history_action: bool):
+    def _async_fetch_and_parse(self, url: str, is_history_action: bool, headers_override: Optional[Dict[str, str]] = None):
         try:
-            response = network.request(url)
-            # Use final resolved URL (supports redirects)
+            response = network.request(url, headers_override=headers_override)
             resolved_url = response.url
             html_text = response.text
             
+            # Check for HTTP 401 Unauthorized (Triggers secure popup Basic Auth modal!)
+            if response.status_code == 401:
+                auth_hdr = response.headers.get("www-authenticate", "Basic")
+                realm = "Secure Directory"
+                if "realm=" in auth_hdr.lower():
+                    try:
+                        realm = auth_hdr.lower().split("realm=")[1].split(",")[0].replace('"', '').strip()
+                    except Exception:
+                        pass
+                # Spawn modal popup dialog on the main thread safely
+                self.after(0, self._show_auth_prompt, url, realm, is_history_action)
+                return
+                
             # Parsing DOM and resolving stylesheets
             dom = parser.HTMLParser(html_text).parse()
             css = parser.get_style_sheets(dom)
@@ -928,6 +927,97 @@ class BrowserTab(tk.Frame):
             self.after(0, self._on_load_success, url, resolved_url, html_text, dom, css, is_history_action)
         except Exception as e:
             self.after(0, self._on_load_error, url, str(e))
+
+    def _show_auth_prompt(self, url: str, realm: str, is_history_action: bool):
+        # Spawns a gorgeous, dark-themed native modal HTTP Basic Auth dialog prompt!
+        host = urllib.parse.urlparse(url).hostname or "Site"
+        self.is_loading = False
+        self.main_browser.show_loading_spinner(False)
+        self.main_browser.status_bar.config(text="Authentication Required 🔒")
+        
+        popup = tk.Toplevel(self.main_browser.root)
+        popup.title("🔒 HTTP Basic Authentication")
+        popup.geometry("380x280")
+        popup.config(bg="#1e1e1e")
+        popup.resizable(False, False)
+        popup.transient(self.main_browser.root)
+        popup.grab_set()
+        
+        # Center the modal dialog over main window
+        parent_x = self.main_browser.root.winfo_x()
+        parent_y = self.main_browser.root.winfo_y()
+        popup.geometry(f"+{parent_x + 400}+{parent_y + 200}")
+        
+        tk.Label(popup, text="🔒 Secure Sign In", bg="#1e1e1e", fg="#00adb5", font=("Arial", 14, "bold")).pack(pady=10)
+        tk.Label(popup, text=f"Domain: {host}\nRealm: {realm}", bg="#1e1e1e", fg="white", font=("Arial", 10), justify="center").pack(pady=5)
+        
+        # Username Frame
+        u_frame = tk.Frame(popup, bg="#1e1e1e")
+        u_frame.pack(fill="x", padx=25, pady=5)
+        tk.Label(u_frame, text="Username:", bg="#1e1e1e", fg="#aaa", font=("Arial", 9, "bold")).pack(side="left")
+        user_ent = tk.Entry(u_frame, bg="#2b2b2b", fg="white", bd=0, insertbackground="white", font=("Arial", 11))
+        user_ent.pack(side="right", fill="x", expand=True, padx=10, ipady=3)
+        user_ent.focus_set()
+        
+        # Password Frame
+        p_frame = tk.Frame(popup, bg="#1e1e1e")
+        p_frame.pack(fill="x", padx=25, pady=5)
+        tk.Label(p_frame, text="Password:", bg="#1e1e1e", fg="#aaa", font=("Arial", 9, "bold")).pack(side="left")
+        pass_ent = tk.Entry(p_frame, bg="#2b2b2b", fg="white", bd=0, insertbackground="white", font=("Arial", 11), show="*")
+        pass_ent.pack(side="right", fill="x", expand=True, padx=10, ipady=3)
+        
+        # Remember Me Option
+        remember_var = tk.BooleanVar(value=True)
+        chk = tk.Checkbutton(popup, text="Remember password in credentials cache", bg="#1e1e1e", fg="#aaa", activebackground="#1e1e1e", activeforeground="white", selectcolor="#2b2b2b", variable=remember_var, bd=0, font=("Arial", 9))
+        chk.pack(pady=10)
+        
+        # Actions Frame
+        act_frame = tk.Frame(popup, bg="#1e1e1e")
+        act_frame.pack(pady=10)
+        
+        def handle_auth():
+            username = user_entry_val = user_entry_get = user_lbl_get = user_get = entry_user_get = ""
+            user = user_entry.get().strip()
+            passwd = pass_entry.get().strip()
+            if not user:
+                return
+            # Encode Base64 auth values
+            auth_raw = f"{user}:{passwd}".encode("utf-8")
+            auth_b64 = base64.b64encode(auth_raw).decode("utf-8")
+            auth_val = f"Basic {auth_b64}"
+            
+            # Save in secure local tab cache
+            self.auth_headers[host] = auth_val
+            
+            if remember_var.get():
+                # Save persistently in local secure credentials file
+                import accounts
+                accounts_data = accounts.load_accounts_data()
+                if "credentials" not in accounts_data:
+                    accounts_data["credentials"] = {}
+                accounts_data["credentials"][host] = auth_val
+                accounts.save_accounts_data(accounts_data)
+                
+            popup.grab_release()
+            popup.destroy()
+            # Re-trigger navigation with active Authorization header injected!
+            self.navigate_to(url, is_history_action=is_history_action)
+            
+        def handle_cancel():
+            popup.grab_release()
+            popup.destroy()
+            self._on_load_error(url, "Authorization required (HTTP 401)")
+            
+        # Re-assign inputs reference so they map perfectly
+        user_entry = user_ent
+        pass_entry = pass_ent
+        
+        # Submit binds
+        user_ent.bind("<Return>", lambda e: pass_ent.focus_set())
+        pass_ent.bind("<Return>", lambda e: handle_auth())
+        
+        tk.Button(act_frame, text="Sign In", bg="#00adb5", fg="white", font=("Arial", 10, "bold"), bd=0, padx=15, pady=4, command=handle_auth).pack(side="left", padx=10)
+        tk.Button(act_frame, text="Cancel", bg="#444444", fg="white", font=("Arial", 10, "bold"), bd=0, padx=15, pady=4, command=handle_cancel).pack(side="left", padx=10)
 
     def _on_load_success(self, orig_url: str, resolved_url: str, html_text: str, dom: parser.HTMLNode, css: list, is_history_action: bool):
         if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
@@ -1388,6 +1478,36 @@ class BrowserTab(tk.Frame):
                             # Bind pressing Enter key inside Entry to submit form!
                             entry.bind("<Return>", lambda e, n=node: self._submit_form(n))
                             self.canvas.create_window(ax, ay, window=entry, width=rw, height=rh, anchor="nw")
+
+                        elif tag == "textarea":
+                            # Create beautiful scrollable tk.Text widget inside canvas!
+                            text_widget = tk.Text(
+                                self.canvas, bg="white", fg="black", insertbackground="black",
+                                bd=1, relief="solid", wrap="word", font=("Arial", max(8, int(10 * self.zoom_level)))
+                            )
+                            # Collect internal text content if any
+                            t_val = ""
+                            if node.children:
+                                t_val = "".join(c.text for c in node.children if c.is_text())
+                            if t_val:
+                                text_widget.insert("1.0", t_val)
+                            elif placeholder:
+                                pass
+                                
+                            self.canvas_widgets.append(text_widget)
+                            self.form_entries[node] = text_widget
+                            self.canvas.create_window(ax, ay, window=text_widget, width=rw, height=rh, anchor="nw")
+
+                        elif tag == "input" and inp_type == "checkbox":
+                            # Create beautiful interactive tk.Checkbutton with BooleanVar reference!
+                            var = tk.BooleanVar(value=node.attributes.get("checked") is not None)
+                            chk = tk.Checkbutton(
+                                self.canvas, bg="#0d0d0d" if self.current_url.startswith("surfgambit://") else "white",
+                                variable=var, bd=0, highlightthickness=0, activebackground="#0d0d0d"
+                            )
+                            self.canvas_widgets.append(chk)
+                            self.form_entries[node] = var
+                            self.canvas.create_window(ax, ay, window=chk, width=rw, height=rh, anchor="nw")
                             
                     elif itype == "inline-block":
                         child_box = node
@@ -1501,7 +1621,13 @@ class BrowserTab(tk.Frame):
                 
             val = ""
             if inp in self.form_entries:
-                val = self.form_entries[inp].get()
+                widget = self.form_entries[inp]
+                if isinstance(widget, tk.Entry):
+                    val = widget.get()
+                elif isinstance(widget, tk.Text):
+                    val = widget.get("1.0", "end-1c")
+                elif isinstance(widget, tk.BooleanVar) or isinstance(widget, tk.Variable):
+                    val = "on" if widget.get() else ""
             else:
                 val = inp.attributes.get("value", "")
                 
@@ -1582,6 +1708,150 @@ class BrowserTab(tk.Frame):
             self.clipboard_clear()
             self.clipboard_append(self.selected_text_content)
             self.main_browser.status_bar.config(text="Selection copied to clipboard!")
+
+    # ============================================================
+    # 👾 2D Offline Space Invader Arcade Game (Day Milestone!)
+    # ============================================================
+    def start_game(self):
+        self.canvas.delete("all")
+        self.game_active = True
+        self.game_over = False
+        self.game_score = 0
+        self.player_x = 300
+        self.player_y = 520
+        self.lasers = []
+        self.aliens = []
+        self.alien_speed = 1.5
+        self.alien_spawn_timer = 0
+        
+        # Lock viewport color to arcade deep space black
+        self.canvas.config(bg="#000000")
+        
+        # CRUCIAL FOCUS FIX: Set focus to canvas so it immediately captures keyboard events on Windows!
+        self.canvas.focus_set()
+        
+        # Bind keyboard events locally
+        self.canvas.bind_all("<Left>", lambda e: self.move_player(-25))
+        self.canvas.bind_all("<Right>", lambda e: self.move_player(25))
+        self.canvas.bind_all("<space>", lambda e: self.fire_laser())
+        self.canvas.bind_all("<Return>", lambda e: self.restart_game())
+        
+        # Trigger frame tick sequence
+        self._game_tick()
+
+    def restart_game(self):
+        if self.game_over:
+            self.start_game()
+
+    def move_player(self, offset):
+        if self.game_active and not self.game_over:
+            cw = max(400, self.canvas.winfo_width())
+            self.player_x = max(20, min(self.player_x + offset, cw - 20))
+
+    def fire_laser(self):
+        if self.game_active and not self.game_over:
+            self.lasers.append([self.player_x, self.player_y - 20])
+
+    def _game_tick(self):
+        if not self.game_active:
+            return
+            
+        if self.game_over:
+            self.canvas.delete("game_el")
+            cw = max(400, self.canvas.winfo_width())
+            self.canvas.create_text(
+                cw/2, 200, text="GAME OVER 👾",
+                fill="#ff5722", font=("Arial", 36, "bold"), anchor="center", tags="game_el"
+            )
+            self.canvas.create_text(
+                cw/2, 260, text=f"Final Score: {self.game_score}",
+                fill="white", font=("Arial", 18, "bold"), anchor="center", tags="game_el"
+            )
+            self.canvas.create_text(
+                cw/2, 320, text="Press ENTER to Restart",
+                fill="#00adb5", font=("Arial", 14, "bold"), anchor="center", tags="game_el"
+            )
+            return
+            
+        # 1. Update laser coordinates
+        active_lasers = []
+        for l in self.lasers:
+            l[1] -= 10
+            if l[1] > 0:
+                active_lasers.append(l)
+        self.lasers = active_lasers
+        
+        # 2. Spawn aliens periodically (~1.2 seconds)
+        self.alien_spawn_timer += 1
+        if self.alien_spawn_timer >= 35: # spawn roughly every ~1 second
+            import random
+            cw = max(400, self.canvas.winfo_width())
+            self.aliens.append([random.randint(40, cw - 40), 20, 0])
+            self.alien_spawn_timer = 0
+            
+        # 3. Update alien coordinates and leg animations
+        active_aliens = []
+        for a in self.aliens:
+            a[1] += self.alien_speed
+            a[2] = (a[2] + 1) % 4 # cycle 4 frames
+            
+            # Hit check with player
+            if abs(a[0] - self.player_x) < 25 and abs(a[1] - self.player_y) < 25:
+                self.game_over = True
+                
+            if a[1] < 540:
+                active_aliens.append(a)
+            else:
+                self.game_over = True # hit bottom boundary
+        self.aliens = active_aliens
+        
+        # 4. Collision calculations (Laser hits Alien)
+        for l in self.lasers:
+            for a in self.aliens:
+                if abs(l[0] - a[0]) < 20 and abs(l[1] - a[1]) < 20:
+                    try: self.lasers.remove(l)
+                    except ValueError: pass
+                    try: self.aliens.remove(a)
+                    except ValueError: pass
+                    self.game_score += 10
+                    self.alien_speed += 0.04 # speed up difficulty!
+                    break
+                    
+        # 5. Draw frame buffers
+        self.canvas.delete("game_el")
+        
+        # Paint player rocket ship
+        px, py = self.player_x, self.player_y
+        self.canvas.create_polygon(px, py - 16, px - 12, py + 12, px + 12, py + 12, fill="#4caf50", outline="", tags="game_el")
+        self.canvas.create_rectangle(px - 4, py + 12, px + 4, py + 16, fill="#ff5722", outline="", tags="game_el")
+        
+        # Paint lasers
+        for l in self.lasers:
+            self.canvas.create_rectangle(l[0] - 2, l[1] - 8, l[0] + 2, l[1], fill="#ff5722", outline="", tags="game_el")
+            
+        # Paint wiggling alien assets
+        for a in self.aliens:
+            self._draw_game_alien(a[0], a[1], a[2])
+            
+        # Score board
+        self.canvas.create_text(
+            30, 30, text=f"Score: {self.game_score}",
+            fill="white", font=("Arial", 12, "bold"), anchor="nw", tags="game_el"
+        )
+        
+        self.after(30, self._game_tick)
+
+    def _draw_game_alien(self, ax, ay, frame_idx):
+        sprite = self.alien.frames[frame_idx]
+        p_size = 2 # 2px pixels
+        offset_x = ax - 8
+        offset_y = ay - 8
+        for r, row in enumerate(sprite):
+            for c, char in enumerate(row):
+                if char == "X":
+                    x1 = offset_x + c * p_size
+                    y1 = offset_y + r * p_size
+                    self.canvas.create_rectangle(x1, y1, x1 + p_size, y1 + p_size, fill="#00adb5", outline="", tags="game_el")
 
 
 class DevToolsFrame(ttk.Frame):

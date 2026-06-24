@@ -376,6 +376,10 @@ def _layout_inline_content(box: LayoutBox, measurer: TextMeasurer, available_wid
             w, h = 150, 24
             if tag == "button" or node.attributes.get("type") == "submit":
                 w, h = 80, 24
+            elif tag == "textarea":
+                w, h = 250, 80
+            elif tag == "input" and node.attributes.get("type", "").lower() == "checkbox":
+                w, h = 16, 16
                 
             w_val = style.get("width", node.attributes.get("width"))
             h_val = style.get("height", node.attributes.get("height"))
