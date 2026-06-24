@@ -111,7 +111,8 @@ WELCOME_HTML = """
     <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
         <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
         <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">📜 History Log</a> |
-        <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a>
+        <a href="surfgambit://downloads" style="margin-right: 15px; font-weight: bold;">⬇️ Downloads</a> |
+        <a href="surfgambit://video" style="font-weight: bold;">🎥 Custom Video Player</a>
     </div>
 
     <!-- Dynamic Quick Dial Bookmarks Grid using custom inline-blocks! -->
@@ -124,6 +125,7 @@ WELCOME_HTML = """
             - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
             - [cookies.py]: Custom stateful Cookie Jar parsing and injecting active sessions.<br>
             - [accounts.py]: Secure salted SHA-256 cryptographies for primitive local accounts.<br>
+            - [video.py]: Standalone .sgv (SurfGambit Video) micro-frame 8-bit visual rendering decoders.<br>
             - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
             - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
         </div>
@@ -290,6 +292,9 @@ class BrowserTab(tk.Frame):
         # Active Game Reference (👾)
         self.active_game = None
         
+        # Active Media/Video Player Reference (.sgv)
+        self.active_player = None
+        
         # Thread lock and active loading control
         self.is_loading = False
         self.loading_thread: Optional[threading.Thread] = None
@@ -417,6 +422,11 @@ class BrowserTab(tk.Frame):
         if self.active_game:
             self.active_game.stop_game()
             self.active_game = None
+            
+        # Shutdown custom SGV video loop if active
+        if self.active_player:
+            self.active_player.stop()
+            self.active_player = None
             
         # Standardize URL or route to selected Search Engine if it's a search term!
         is_schema = url.startswith("http://") or url.startswith("https://") or url.startswith("surfgambit://")
@@ -616,6 +626,22 @@ class BrowserTab(tk.Frame):
             import game
             self.active_game = game.SpaceInvaderGame(self.canvas, self.main_browser, self.main_browser.alien)
             self.active_game.start_game()
+            
+            self.main_browser.update_ui_state(self)
+            return
+
+        # Render custom 8-bit SGV Video Player
+        if url == "surfgambit://video":
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.current_url = url
+            self.canvas.delete("all")
+            self.canvas.config(bg="#000000")
+            
+            import video
+            self.active_player = video.SGVPlayer(self.canvas, video.LAUNCH_MOVIE, x=140, y=80, scale=24)
+            self.active_player.start()
             
             self.main_browser.update_ui_state(self)
             return
