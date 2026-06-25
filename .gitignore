@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# User data files (auto-generated, personal)
+cookies.json
+bookmarks.json
+accounts.json
+downloads.json
+settings.json
+
+# OS junk
+.DS_Store
+Thumbs.db
