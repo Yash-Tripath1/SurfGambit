@@ -1204,7 +1204,7 @@ class BrowserTab(tk.Frame):
                 <p>SurfGambit was unable to load the requested page:</p>
                 <p class="url">{orig_escape(url)}</p>
                 <p><b>Error Details:</b> {orig_escape(err_msg)}</p>
-                <p style="margin-top: 20px; color: #aaa;">No internet connection? Don't stress, twin. Play our offline arcade game while you wait!</p>
+                <p style="margin-top: 20px; color: #aaa;">No internet connection? Don't stress, twin—play our offline arcade game while you wait!</p>
                 <a href="surfgambit://game" class="btn">👾 PLAY ALIEN DEFENDER</a>
             </div>
         </body>
@@ -1301,6 +1301,13 @@ class BrowserTab(tk.Frame):
         self.canvas.delete("all")
         self.link_map.clear()
         self.search_matches_count = 0
+        
+        # Safe scroll-view reset: always scroll the viewport back to the top on page load!
+        # This prevents new pages from rendering off-screen if the user was scrolled down.
+        try:
+            self.canvas.yview_moveto(0.0)
+        except Exception:
+            pass
         
         # Destroy and clear live form inputs from previous render
         for widget in getattr(self, "canvas_widgets", []):
