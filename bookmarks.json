@@ -7,6 +7,22 @@
     ],
     "history": [
         {
+            "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FMeow&rut=c626c0df11d64e5fc2f4bd95494e37a92d7598f2fb3e0ec927c036b3f0456962",
+            "time": "23:19:14"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=meow",
+            "time": "23:19:10"
+        },
+        {
+            "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.dailypaws.com%2Fcats%2Dkittens%2Fbehavior%2Fcommon%2Dcat%2Dbehaviors%2Fcat%2Dmeowing&rut=cb051abd871a54af32b90fd5458d2eb87f8b1d0ec2ca0ae9c593b9b8f6419aa4",
+            "time": "23:03:00"
+        },
+        {
+            "url": "https://html.duckduckgo.com/html/?q=meow",
+            "time": "23:02:56"
+        },
+        {
             "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.dailypaws.com%2Fcats%2Dkittens%2Fbehavior%2Fcommon%2Dcat%2Dbehaviors%2Fcat%2Dmeowing&rut=cb051abd871a54af32b90fd5458d2eb87f8b1d0ec2ca0ae9c593b9b8f6419aa4",
             "time": "22:57:55"
         },
@@ -389,22 +405,6 @@
         {
             "url": "https://html.duckduckgo.com/html/?q=duck",
             "time": "2026-06-20 00:30:15"
-        },
-        {
-            "url": "https://html.duckduckgo.com/html/?q=duck&kl=&df=",
-            "time": "2026-06-20 00:30:12"
-        },
-        {
-            "url": "https://html.duckduckgo.com/html/?q=duck",
-            "time": "2026-06-20 00:30:00"
-        },
-        {
-            "url": "https://html.duckduckgo.com/html/?q=meow",
-            "time": "2026-06-20 00:25:58"
-        },
-        {
-            "url": "https://news.ycombinator.com",
-            "time": "2026-06-20 00:25:35"
         }
     ]
 }
