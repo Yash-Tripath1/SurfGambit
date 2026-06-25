@@ -73,7 +73,8 @@ def parse_tag_content(content: str) -> Tuple[str, Dict[str, str]]:
     for match in pattern.finditer(attr_str):
         name = match.group(1).lower()
         val = match.group(2) or match.group(3) or match.group(4) or ""
-        attributes[name] = val
+        # Decodes HTML entities (like &amp; -> &) inside attribute values to ensure URLs resolve correctly
+        attributes[name] = decode_html_entities(val)
         
     return tag_name, attributes
 
