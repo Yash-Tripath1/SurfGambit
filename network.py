@@ -74,7 +74,11 @@ def request(url: str, max_redirects: int = 5, headers_override: Optional[Dict[st
 
         # Load dynamic spoofed User-Agent from local settings.json
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        if os.path.exists("settings.json"):
+        if "google.com/search" in current_url:
+            # Universal Google bypass User-Agent (Lynx).
+            # Google bypasses the JavaScript block screen if it detects a pure text-based Lynx browser client!
+            user_agent = "Lynx/2.8.9rel.1 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/1.1.1d"
+        elif os.path.exists("settings.json"):
             try:
                 with open("settings.json", "r") as f:
                     s = json.load(f)
