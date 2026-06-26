@@ -379,3 +379,6 @@ if __name__ == "__main__":
     
     print("\nDOM Tree:")
     print(doc.dump())
+import css_compiler
+compiler = css_compiler.CSSCompiler()
+
