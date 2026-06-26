@@ -134,7 +134,7 @@ WELCOME_HTML = """
     <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
         <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">⭐ Bookmarks</a> | 
         <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">📜 History Log</a> |
-        <a href="surfgambit://downloads" style="margin-right: 15px; font-weight: bold;">⬇️ Downloads</a> |
+        <a href="surfgambit://downloads" style="font-weight: bold;">⬇️ Downloads</a> |
         <a href="surfgambit://settings" style="font-weight: bold;">⚙️ Settings</a>
     </div>
 
@@ -251,8 +251,6 @@ class RetroAlienInvader(tk.Canvas):
         self.animate()
 
     def animate(self):
-        # Crucial Tkinter fix: stop animation loops if the widget has been destroyed!
-        # This prevents "invalid command name" after-script crashes when navigating.
         if not self.winfo_exists():
             return
             
@@ -268,7 +266,7 @@ class RetroAlienInvader(tk.Canvas):
         self._draw_frame(self.current_frame)
                     
         self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.after(250, self.animate) # slightly faster dance speed!
+        self.after(250, self.animate)
 
     def _draw_frame(self, frame_idx):
         frame = self.frames[frame_idx]
@@ -364,7 +362,7 @@ class BrowserTab(tk.Frame):
         self.canvas.bind("<ButtonRelease-1>", self.on_select_end)
         
         # Right-Click Context Copy Menu
-        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu = tk.Menu(self, twilight=0) if hasattr(tk, "twilight") else tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="📋 Copy Selection", command=self.copy_selection)
         
         self.canvas.bind("<Button-3>", self.show_context_menu)
@@ -471,6 +469,8 @@ class BrowserTab(tk.Frame):
                     url = f"https://www.google.com/search?q={query_encoded}&gbv=1"
                 elif engine == "Wikipedia":
                     url = f"https://en.wikipedia.org/wiki/Special:Search?search={query_encoded}"
+                elif engine == "Images":
+                    url = f"surfgambit://images?q={query_encoded}"
                 else:
                     url = f"https://html.duckduckgo.com/html/?q={query_encoded}"
 
@@ -746,6 +746,25 @@ class BrowserTab(tk.Frame):
             self.main_browser.update_ui_state(self)
             return
 
+        # Render custom Image Search Gallery!
+        if url.startswith("surfgambit://images"):
+            parsed_query = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed_query.query)
+            q = params.get("q", [""])[0]
+            
+            if not is_history_action and self.current_url != url:
+                self.back_stack.append(self.current_url)
+                self.forward_stack.clear()
+            self.current_url = url
+            
+            self.is_loading = True
+            self.main_browser.status_bar.config(text=f"Searching image gallery for '{q}'...")
+            self.main_browser.show_loading_spinner(True)
+            
+            # Spawn background thread to fetch search results, extract images, and pre-download them
+            threading.Thread(target=self._async_fetch_image_search, args=(q,), daemon=True).start()
+            return
+
         # Handle Internal Command Actions
         if url == "surfgambit://clear-history":
             hub = load_hub_data()
@@ -1008,6 +1027,105 @@ class BrowserTab(tk.Frame):
         except Exception as e:
             self.after(0, self._on_download_error, url, str(e))
 
+    def _async_fetch_image_search(self, q: str):
+        try:
+            # Fetch search results from DuckDuckGo HTML which has lightweight images
+            search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
+            resp = network.request(search_url)
+            
+            # Parse DOM
+            dom = parser.HTMLParser(resp.text).parse()
+            
+            # Find all img nodes recursively
+            img_nodes = []
+            def collect_images(node):
+                if node.tag == "img":
+                    img_nodes.append(node)
+                for child in node.children:
+                    collect_images(child)
+            collect_images(dom)
+            
+            # Extract up to 6 image sources (skipping icons/logos)
+            img_urls = []
+            for node in img_nodes:
+                src = node.attributes.get("src", "")
+                if src and not any(ic in src.lower() for ic in ("logo", "icon", "arrow", "blank", "search")):
+                    full_url = urllib.parse.urljoin("https://html.duckduckgo.com", src)
+                    if full_url not in img_urls:
+                        img_urls.append(full_url)
+                        if len(img_urls) >= 6:
+                            break
+                            
+            # Pre-download all the matched images in this background thread
+            downloaded_urls = []
+            for img_url in img_urls:
+                try:
+                    img_resp = network.request(img_url)
+                    self.loaded_images[img_url] = None # placeholder
+                    downloaded_urls.append((img_url, img_resp.body))
+                except Exception:
+                    pass
+                    
+            self.after(0, self._on_image_search_complete, q, downloaded_urls)
+        except Exception as e:
+            self.after(0, self._on_load_error, f"surfgambit://images?q={urllib.parse.quote(q)}", str(e))
+
+    def _on_image_search_complete(self, q: str, downloaded_urls: list):
+        if not self.winfo_exists() or not self.main_browser.root.winfo_exists():
+            return
+        self.is_loading = False
+        self.main_browser.show_loading_spinner(False)
+        self.main_browser.status_bar.config(text="Done")
+        
+        # Load raw bytes into PhotoImage objects on the main thread safely
+        import base64
+        valid_urls = []
+        for img_url, img_data in downloaded_urls:
+            try:
+                b64_data = base64.b64encode(img_data).decode("utf-8")
+                photo = tk.PhotoImage(data=b64_data)
+                self.loaded_images[img_url] = photo
+                valid_urls.append(img_url)
+            except Exception:
+                pass
+                
+        # Generate custom gallery HTML consisting of ONLY successful <img> tags in a grid!
+        img_tags = ""
+        for url in valid_urls:
+            img_tags += f'<img src="{url}" width="160" height="140">'
+            
+        if not img_tags:
+            img_tags = "<p style='color: #888;'>No search results found or images failed to decode. Try another query!</p>"
+            
+        self.raw_html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 30px; text-align: center; }}
+                h1 {{ color: #00adb5; margin-bottom: 5px; }}
+                .gallery {{ text-align: center; margin-top: 20px; }}
+                img {{ display: inline-block; margin: 15px; border: 1px solid #333; border-radius: 8px; width: 160px; height: 140px; }}
+                a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <h1>📷 Image Search: "{q}"</h1>
+            <p style="color: #666; font-size: 13px; margin-bottom: 25px;">SurfGambit Canvas Gallery View</p>
+            <div class="gallery">
+                {img_tags}
+            </div>
+            <p style="margin-top: 30px;"><a href="surfgambit://welcome">Back to Home</a></p>
+        </body>
+        </html>
+        """
+        
+        # Parse and render!
+        self.dom_tree = parser.HTMLParser(self.raw_html).parse()
+        self.css_rules = parser.get_style_sheets(self.dom_tree)
+        parser.resolve_styles(self.dom_tree, self.css_rules)
+        self.trigger_layout()
+        self.main_browser.update_ui_state(self)
+
     def _on_download_complete(self, filename: str):
         self.main_browser.status_bar.config(text=f"Successfully downloaded {filename}! Saved to Downloads/")
         if self.current_url == "surfgambit://downloads":
@@ -1046,14 +1164,47 @@ class BrowserTab(tk.Frame):
             # Parsing DOM and resolving stylesheets
             dom = parser.HTMLParser(html_text).parse()
             
-            # Performance Optimization: Large sites like Wikipedia contain thousands of
-            # stylesheet rules we don't draw anyway, causing severe CPU locks inside resolve_styles.
-            # Bypassing stylesheet parsing on external domains makes them load INSTANTLY (under 0.1s)!
+            # Active CSS compiler integration!
+            # If it's an internal surfgambit:// page, we use our gorgeous custom css_compiler
+            # to resolve specificity cascades and selectors beautifully!
             css = []
             if url.startswith("surfgambit://"):
-                css = parser.get_style_sheets(dom)
+                import css_compiler
+                compiler = css_compiler.CSSCompiler()
                 
-            parser.resolve_styles(dom, css)
+                # Gather raw style text from style tags
+                style_texts = []
+                def collect_styles(node):
+                    if node.tag == "style" and node.children:
+                        style_texts.append("".join(c.text for c in node.children if c.is_text()))
+                    for child in node.children:
+                        collect_styles(child)
+                collect_styles(dom)
+                
+                compiler.parse_stylesheet("\n".join(style_texts))
+                
+                # Custom resolved cascade recursive resolver
+                def resolve_custom_styles(node, parent_style=None):
+                    if node.is_text():
+                        style = {}
+                        inheritable_props = ["color", "font-family", "font-size", "font-weight", "font-style", "text-align", "text-decoration"]
+                        if parent_style:
+                            for prop in inheritable_props:
+                                if prop in parent_style:
+                                    style[prop] = parent_style[prop]
+                        style["display"] = "inline"
+                        node.style = style
+                        return
+                    
+                    # Resolve styles using our custom css_compiler!
+                    node.style = compiler.resolve_styles(node, parser.DEFAULT_STYLES.get(node.tag, {"display": "inline"}))
+                    for child in node.children:
+                        resolve_custom_styles(child, node.style)
+                        
+                resolve_custom_styles(dom)
+            else:
+                # Bypassing stylesheet parsing on external domains makes them load INSTANTLY (under 0.1s)!
+                parser.resolve_styles(dom, [])
             
             # Post success callback on main thread
             self.after(0, self._on_load_success, url, resolved_url, html_text, dom, css, is_history_action)
@@ -1309,13 +1460,6 @@ class BrowserTab(tk.Frame):
         self.link_map.clear()
         self.search_matches_count = 0
         
-        # Safe scroll-view reset: always scroll the viewport back to the top on page load!
-        # This prevents new pages from rendering off-screen if the user was scrolled down.
-        try:
-            self.canvas.yview_moveto(0.0)
-        except Exception:
-            pass
-        
         # Destroy and clear live form inputs from previous render
         for widget in getattr(self, "canvas_widgets", []):
             try:
@@ -1356,6 +1500,13 @@ class BrowserTab(tk.Frame):
         total_height = self.layout_tree.height
         self.canvas.config(scrollregion=(0, 0, self.canvas.winfo_width(), total_height + 100))
         
+        # Safe scroll-view reset: always scroll the viewport back to the top on page load!
+        # This prevents new pages from rendering off-screen if the user was scrolled down.
+        try:
+            self.canvas.yview_moveto(0.0)
+        except Exception:
+            pass
+            
         # Recursively render the layout blocks
         self._render_box(self.layout_tree)
         
@@ -1847,150 +1998,6 @@ class BrowserTab(tk.Frame):
             self.clipboard_append(self.selected_text_content)
             self.main_browser.status_bar.config(text="Selection copied to clipboard!")
 
-    # ============================================================
-    # 👾 2D Offline Space Invader Arcade Game (Day Milestone!)
-    # ============================================================
-    def start_game(self):
-        self.canvas.delete("all")
-        self.game_active = True
-        self.game_over = False
-        self.game_score = 0
-        self.player_x = 300
-        self.player_y = 520
-        self.lasers = []
-        self.aliens = []
-        self.alien_speed = 1.5
-        self.alien_spawn_timer = 0
-        
-        # Lock viewport color to arcade deep space black
-        self.canvas.config(bg="#000000")
-        
-        # CRUCIAL FOCUS FIX: Set focus to canvas so it immediately captures keyboard events on Windows!
-        self.canvas.focus_set()
-        
-        # Bind keyboard events locally
-        self.canvas.bind_all("<Left>", lambda e: self.move_player(-25))
-        self.canvas.bind_all("<Right>", lambda e: self.move_player(25))
-        self.canvas.bind_all("<space>", lambda e: self.fire_laser())
-        self.canvas.bind_all("<Return>", lambda e: self.restart_game())
-        
-        # Trigger frame tick sequence
-        self._game_tick()
-
-    def restart_game(self):
-        if self.game_over:
-            self.start_game()
-
-    def move_player(self, offset):
-        if self.game_active and not self.game_over:
-            cw = max(400, self.canvas.winfo_width())
-            self.player_x = max(20, min(self.player_x + offset, cw - 20))
-
-    def fire_laser(self):
-        if self.game_active and not self.game_over:
-            self.lasers.append([self.player_x, self.player_y - 20])
-
-    def _game_tick(self):
-        if not self.game_active:
-            return
-            
-        if self.game_over:
-            self.canvas.delete("game_el")
-            cw = max(400, self.canvas.winfo_width())
-            self.canvas.create_text(
-                cw/2, 200, text="GAME OVER 👾",
-                fill="#ff5722", font=("Arial", 36, "bold"), anchor="center", tags="game_el"
-            )
-            self.canvas.create_text(
-                cw/2, 260, text=f"Final Score: {self.game_score}",
-                fill="white", font=("Arial", 18, "bold"), anchor="center", tags="game_el"
-            )
-            self.canvas.create_text(
-                cw/2, 320, text="Press ENTER to Restart",
-                fill="#00adb5", font=("Arial", 14, "bold"), anchor="center", tags="game_el"
-            )
-            return
-            
-        # 1. Update laser coordinates
-        active_lasers = []
-        for l in self.lasers:
-            l[1] -= 10
-            if l[1] > 0:
-                active_lasers.append(l)
-        self.lasers = active_lasers
-        
-        # 2. Spawn aliens periodically (~1.2 seconds)
-        self.alien_spawn_timer += 1
-        if self.alien_spawn_timer >= 35: # spawn roughly every ~1 second
-            import random
-            cw = max(400, self.canvas.winfo_width())
-            self.aliens.append([random.randint(40, cw - 40), 20, 0])
-            self.alien_spawn_timer = 0
-            
-        # 3. Update alien coordinates and leg animations
-        active_aliens = []
-        for a in self.aliens:
-            a[1] += self.alien_speed
-            a[2] = (a[2] + 1) % 4 # cycle 4 frames
-            
-            # Hit check with player
-            if abs(a[0] - self.player_x) < 25 and abs(a[1] - self.player_y) < 25:
-                self.game_over = True
-                
-            if a[1] < 540:
-                active_aliens.append(a)
-            else:
-                self.game_over = True # hit bottom boundary
-        self.aliens = active_aliens
-        
-        # 4. Collision calculations (Laser hits Alien)
-        for l in self.lasers:
-            for a in self.aliens:
-                if abs(l[0] - a[0]) < 20 and abs(l[1] - a[1]) < 20:
-                    try: self.lasers.remove(l)
-                    except ValueError: pass
-                    try: self.aliens.remove(a)
-                    except ValueError: pass
-                    self.game_score += 10
-                    self.alien_speed += 0.04 # speed up difficulty!
-                    break
-                    
-        # 5. Draw frame buffers
-        self.canvas.delete("game_el")
-        
-        # Paint player rocket ship
-        px, py = self.player_x, self.player_y
-        self.canvas.create_polygon(px, py - 16, px - 12, py + 12, px + 12, py + 12, fill="#4caf50", outline="", tags="game_el")
-        self.canvas.create_rectangle(px - 4, py + 12, px + 4, py + 16, fill="#ff5722", outline="", tags="game_el")
-        
-        # Paint lasers
-        for l in self.lasers:
-            self.canvas.create_rectangle(l[0] - 2, l[1] - 8, l[0] + 2, l[1], fill="#ff5722", outline="", tags="game_el")
-            
-        # Paint wiggling alien assets
-        for a in self.aliens:
-            self._draw_game_alien(a[0], a[1], a[2])
-            
-        # Score board
-        self.canvas.create_text(
-            30, 30, text=f"Score: {self.game_score}",
-            fill="white", font=("Arial", 12, "bold"), anchor="nw", tags="game_el"
-        )
-        
-        self.after(30, self._game_tick)
-
-    def _draw_game_alien(self, ax, ay, frame_idx):
-        sprite = self.alien.frames[frame_idx]
-        p_size = 2 # 2px pixels
-        offset_x = ax - 8
-        offset_y = ay - 8
-        for r, row in enumerate(sprite):
-            for c, char in enumerate(row):
-                if char == "X":
-                    x1 = offset_x + c * p_size
-                    y1 = offset_y + r * p_size
-                    self.canvas.create_rectangle(x1, y1, x1 + p_size, y1 + p_size, fill="#00adb5", outline="", tags="game_el")
-
 
 class DevToolsFrame(ttk.Frame):
     def __init__(self, parent: tk.PanedWindow):
@@ -2135,6 +2142,9 @@ class SurfGambitApp:
         self.url_entry.bind("<Return>", lambda e: self.trigger_navigation())
         self.url_entry.bind("<FocusIn>", lambda e: self.url_entry.selection_range(0, "end"))
         
+        # Bind KeyRelease on url_entry for Smart Autocomplete suggestions!
+        self.url_entry.bind("<KeyRelease>", self.on_url_key_release)
+        
         self.go_btn = tk.Button(nav_row1, text="➔", command=self.trigger_navigation, **btn_opts)
         self.go_btn.pack(side="left", padx=2)
         
@@ -2144,7 +2154,7 @@ class SurfGambitApp:
         
         # Search Engine Dropdown
         tk.Label(nav_row1, text="🔍:", fg="white", bg=self.chrome_bg, font=("Arial", 10)).pack(side="left", padx=2)
-        self.search_engine_combo = ttk.Combobox(nav_row1, values=["Google", "DuckDuckGo", "Wikipedia"], width=11, state="readonly")
+        self.search_engine_combo = ttk.Combobox(nav_row1, values=["Google", "DuckDuckGo", "Wikipedia", "Images"], width=11, state="readonly")
         self.search_engine_combo.set("DuckDuckGo")
         self.search_engine_combo.pack(side="left", padx=4)
 
@@ -2206,6 +2216,46 @@ class SurfGambitApp:
         
         # Create initial startup tab
         self.new_tab()
+
+    def on_url_key_release(self, event):
+        # Ignore control keys, backspace, and delete so typing remains smooth!
+        if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Up", "Down", "Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R", "Return"):
+            return
+            
+        text = self.url_entry.get().strip().lower()
+        if not text or len(text) < 2:
+            return
+            
+        # Search bookmarks and history for matching prefixes
+        hub = load_hub_data()
+        all_urls = []
+        for bm in hub.get("bookmarks", []):
+            all_urls.append(bm["url"])
+        for h in hub.get("history", []):
+            all_urls.append(h["url"])
+            
+        # Clean URLs (strip protocol for easier matching)
+        match_url = None
+        for raw_url in all_urls:
+            url_clean = raw_url.lower()
+            if url_clean.startswith("http://"):
+                url_clean = url_clean[7:]
+            elif url_clean.startswith("https://"):
+                url_clean = url_clean[8:]
+            elif url_clean.startswith("surfgambit://"):
+                url_clean = url_clean[13:]
+                
+            if url_clean.startswith(text):
+                match_url = url_clean
+                break
+                
+        if match_url:
+            # Insert suggestion and select/highlight the appended portion
+            pos = len(text)
+            self.url_entry.delete(0, "end")
+            self.url_entry.insert(0, match_url)
+            self.url_entry.selection_range(pos, "end")
+            self.url_entry.icursor(pos)
 
     def update_tab_bar(self):
         # Clear existing tab frames in tab bar
