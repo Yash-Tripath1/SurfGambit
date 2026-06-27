@@ -498,7 +498,6 @@ if __name__ == "__main__":
     doc = HTMLParser(html_content).parse()
     rules = get_style_sheets(doc)
     resolve_styles(doc, rules)
-    
     print("Building layout...")
     measurer = TextMeasurer()
     layout_tree = build_layout_tree(doc)

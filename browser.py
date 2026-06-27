@@ -262,11 +262,26 @@ class RetroAlienInvader(tk.Canvas):
             self._draw_frame(0)
             return
             
+        # Dynamic Active Loading mascot detection!
+        is_loading = False
+        if self.main_app:
+            tab = self.main_app.get_active_tab()
+            if tab and getattr(tab, "is_loading", False):
+                is_loading = True
+                
+        # If any page is currently loading, flash colors and wiggle at hyper-speed!
+        if is_loading:
+            self.color = "#ff5722" if self.current_frame % 2 == 0 else "#00adb5"
+            speed_ms = 100 # Hyper-speed panic wiggle!
+        else:
+            self.color = "#00adb5"
+            speed_ms = 250 # Standard relaxed wiggle
+            
         self.delete("all")
         self._draw_frame(self.current_frame)
                     
         self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.after(250, self.animate)
+        self.after(speed_ms, self.animate)
 
     def _draw_frame(self, frame_idx):
         frame = self.frames[frame_idx]
@@ -1029,30 +1044,22 @@ class BrowserTab(tk.Frame):
 
     def _async_fetch_image_search(self, q: str):
         try:
-            # Fetch search results from DuckDuckGo HTML which has lightweight images
-            search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
-            resp = network.request(search_url)
+            # Query Wikipedia's public unauthenticated PageImages JSON API for high-quality, actual photos!
+            # It returns actual, real-world images (like photos of lions, cars, space, etc.) with zero key needed!
+            api_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=pageimages&format=json&piprop=thumbnail&pithumbsize=200&generator=search&gsrsearch={urllib.parse.quote(q)}"
+            resp = network.request(api_url)
             
-            # Parse DOM
-            dom = parser.HTMLParser(resp.text).parse()
+            # Parse the JSON response
+            data = json.loads(resp.text)
+            pages = data.get("query", {}).get("pages", {})
             
-            # Find all img nodes recursively
-            img_nodes = []
-            def collect_images(node):
-                if node.tag == "img":
-                    img_nodes.append(node)
-                for child in node.children:
-                    collect_images(child)
-            collect_images(dom)
-            
-            # Extract up to 6 image sources (skipping icons/logos)
             img_urls = []
-            for node in img_nodes:
-                src = node.attributes.get("src", "")
-                if src and not any(ic in src.lower() for ic in ("logo", "icon", "arrow", "blank", "search")):
-                    full_url = urllib.parse.urljoin("https://html.duckduckgo.com", src)
-                    if full_url not in img_urls:
-                        img_urls.append(full_url)
+            for k, v in pages.items():
+                thumb = v.get("thumbnail", {})
+                if thumb:
+                    src = thumb.get("source")
+                    if src and src.startswith("http"):
+                        img_urls.append(src)
                         if len(img_urls) >= 6:
                             break
                             
