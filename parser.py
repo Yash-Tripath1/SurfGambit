@@ -8,7 +8,7 @@ class HTMLNode:
         self.parent = parent
         self.text = text
         self.children: List['HTMLNode'] = []
-        self.style: Dict[str, str] = {} # Resolved CSS properties
+        self.style: Dict[str, str] = {} 
 
     def is_text(self) -> bool:
         return self.tag == "text"
@@ -68,7 +68,6 @@ def parse_tag_content(content: str) -> Tuple[str, Dict[str, str]]:
     
     attr_str = parts[1]
     attributes = {}
-    # Handles: name="val" or name='val' or name=val or just name
     pattern = re.compile(r'([a-zA-Z0-9\-:_]+)(?:\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+)))?')
     for match in pattern.finditer(attr_str):
         name = match.group(1).lower()
