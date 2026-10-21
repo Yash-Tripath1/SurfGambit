@@ -1,20 +1,37 @@
-# Python cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# PyInstaller build output
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PyInstaller
 build/
 dist/
-*.spec
+# SurfGambit.spec is tracked on purpose: it is the documented build recipe.
 
-# User data files (auto-generated, personal)
+# Local browser data (never commit cookies, history, profiles)
+*.log
 cookies.json
+settings.json
+history.json
 bookmarks.json
 accounts.json
-downloads.json
-settings.json
+master.key
+.security_warning
+downloads/
 
-# OS junk
+# Editors / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+
+# Screenshots taken while testing
+*.png.tmp

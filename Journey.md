@@ -164,3 +164,77 @@ SurfGambit v1 is done.
 ---
 
 *Built by Anadi Tripathi (Yash): student, builder, person who thought writing a browser from scratch in two weeks was a reasonable idea *
+
+---
+
+# v2.0 — the rewrite (Oct 2026)
+
+v1 was "a browser that works on simple pages". This is the pass that went
+through the whole thing with a critical eye, wrote down every defect, and then
+fixed them one by one, testing each fix instead of assuming.
+
+## What was actually broken in v1
+
+An audit of the v1 tree turned up 15 reproducible defects. The worst of them:
+
+| # | Defect | Why it mattered |
+| --- | --- | --- |
+| 1 | `class="col"` → `RecursionError` | A single class name could hang the tab |
+| 2 | `<link rel=stylesheet>` was thrown away | Every styled site lost its CSS |
+| 3 | Any site could set `Domain=.com` | Total cookie isolation failure |
+| 4 | TLS verification was disabled | No protection against interception |
+| 5 | `Expires=not-a-date` raised | One bad header killed the request |
+| 6 | 2,000-deep DOM → `RecursionError` | Hostile or generated pages crashed the browser |
+| 7 | Passwords submitted in the URL | Leaked into history and logs |
+| 8 | `@media` corrupted every rule after it | Most real stylesheets |
+| 9 | CSS specificity ignored | `#id` lost to a later `.class` |
+| 10 | `">"` inside an attribute shredded the tag | Ordinary `title="a > b"` broke pages |
+
+…plus auto-downloading `.exe` files with silent overwrite, unescaped f-strings
+in `surfgambit://` pages, a font-cache bug that underlined every link on the
+page, worker threads calling `after()`, and a game whose `bind_all` handlers
+outlived the game.
+
+## What v2 changes
+
+The engine moved into two packages — `core/` (no Tk imports, fully testable)
+and `ui/` (Tk only). The old module names stay on disk as thin compatibility
+shims, so `import parser`, `import layout`, `import network` and friends still
+work exactly as before.
+
+- **HTML**: a real state machine — quoted attributes, comments, implied
+  `html/head/body`, RAWTEXT/RCDATA, entity decoding, iterative builder that
+  survives 20,000 levels of nesting.
+- **CSS**: a real tokenizer (strings with braces, nested `@media`/`@supports`,
+  `!important`), correct origin/specificity/source order, inheritance,
+  shorthand expansion, `em`/`rem`/`%`/`vh`/`vw`, and `<link rel=stylesheet>`
+  actually fetched and cascaded.
+- **Layout**: block (collapsing margins, `auto` centring, anonymous blocks),
+  inline (line boxes, baselines, `justify`, `white-space`), inline-block,
+  tables with `colspan`, **flexbox**, and **CSS grid** — Wikipedia's Vector
+  skin is a grid, and now it renders as one.
+- **Network**: GET *and* POST, verified TLS, gzip/deflate, chunked, redirects
+  with method rewriting and per-hop cookies.
+- **Cookies**: RFC 6265 — domain match, public-suffix rejection, path
+  boundaries, `Max-Age=0`.
+- **Security**: PBKDF2-HMAC-SHA256 (600k rounds) for local profiles; stored
+  HTTP passwords removed entirely; sanitised download paths; escaped output on
+  every internal page.
+- **Scripting**: `core/js` — a documented JavaScript subset bound to the real
+  DOM, off by default.
+- **UI**: menus, real shortcuts, per-tab history, find with match count, zoom
+  that re-lays-out, text selection, save page, view source, dev tools, and one
+  UI queue so no worker thread ever touches Tk.
+
+## How it was verified
+
+- `python -m tests.run` — 41 headless engine checks, no network, no display.
+- A 15-point reproduction harness that returned 15 `[BUG]` on v1 and 0 on v2.
+- Live rendering in Xvfb: example.com, text.npr.org, news.ycombinator.com,
+  en.wikipedia.org/wiki/Cat, github.com — screenshots compared against v1.
+
+v1's own roadmap ("floats, percentage widths, cookie sessions on restart") is
+mostly done; what is still deliberately out of scope is a real JS engine,
+`position: absolute/fixed`, floats, transforms and WebP/AVIF decoding.
+
+*Built by Yash Tripathi.*

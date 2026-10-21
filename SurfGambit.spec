@@ -1,16 +1,38 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""
+PyInstaller build recipe.
 
+    pyinstaller SurfGambit.spec
+
+`browser.py` imports `core.*` and `ui.*` lazily (tkinter is imported inside
+`main()`), so both packages are listed as hidden imports: without them the
+frozen build starts and then fails on the first navigation.
+"""
+
+core_modules = [
+    "core.values", "core.storage", "core.store", "core.accounts",
+    "core.downloads", "core.search",
+    "core.dom", "core.dom.tree", "core.dom.tokenizer", "core.dom.parser",
+    "core.style", "core.style.css", "core.style.selectors", "core.style.cascade",
+    "core.layout", "core.layout.box", "core.layout.block", "core.layout.inline",
+    "core.layout.text", "core.layout.table", "core.layout.flex", "core.layout.grid",
+    "core.net", "core.net.client", "core.net.cookies",
+    "core.js", "core.js.surfscript",
+]
+ui_modules = [
+    "ui.app", "ui.tab", "ui.renderer", "ui.pages", "ui.mascot", "ui.game",
+]
 
 a = Analysis(
     ['browser.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=core_modules + ui_modules,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['numpy', 'PIL', 'test', 'unittest'],
     noarchive=False,
     optimize=0,
 )
