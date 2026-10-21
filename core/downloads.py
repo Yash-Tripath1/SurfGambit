@@ -1,7 +1,7 @@
 """
 core/downloads.py — download queue with safe filenames.
 
-Rules this file enforces (each one was a bug in v1):
+Rules this file enforces (each one was a bug in legacy):
 
 * never overwrite a file that already exists — pick "name (2).ext" instead
 * never let the server choose the path: only the final component is used,

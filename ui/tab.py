@@ -1,7 +1,7 @@
 """
 ui/tab.py — one browser tab: navigation, document loading, painting.
 
-The concurrency model, which fixes a whole class of v1 bugs:
+The concurrency model, which fixes a whole class of legacy bugs:
 
   * every navigation bumps a `generation` counter; any callback whose
     generation is stale is dropped, so a slow response can never overwrite the

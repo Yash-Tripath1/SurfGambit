@@ -22,6 +22,7 @@ cookies.json
 settings.json
 history.json
 bookmarks.json
+downloads.json
 accounts.json
 master.key
 .security_warning

@@ -517,7 +517,7 @@ def _():
         raise AssertionError(f"unexpected result {errors}")
 
 
-@check("js", "the 1.x surfscript API still works")
+@check("js", "the legacy surfscript API still works")
 def _():
     import surfscript as legacy
 
@@ -535,7 +535,7 @@ def _():
 # Compatibility shims
 # ---------------------------------------------------------------------------
 
-@check("shims", "1.x module APIs still import and answer")
+@check("shims", "legacy module APIs still import and answer")
 def _():
     import accounts
     import cookies
@@ -555,7 +555,7 @@ def _():
 
 
 # ---------------------------------------------------------------------------
-# Phase 2/3 additions: cache, streaming, culling, SurfScript 2.0, timers
+# Engine checks: cache, streaming, culling, the script interpreter, timers
 # ---------------------------------------------------------------------------
 
 @check("cache", "fresh entries are served without touching the network")
@@ -578,12 +578,12 @@ def _():
 
     cache = HTTPCache(None)
     cache.store("https://example.com/", 200, "OK",
-                {"etag": '"v1"', "cache-control": "max-age=0"}, [], b"x")
+                {"etag": '"legacy"', "cache-control": "max-age=0"}, [], b"x")
     entry = cache.lookup("https://example.com/")
     if entry is None or entry.is_fresh():
         raise AssertionError("entry should be stale with max-age=0")
-    eq(entry.conditional_headers(), {"If-None-Match": '"v1"'})
-    entry.refresh({"etag": '"v1"', "cache-control": "max-age=600"}, [])
+    eq(entry.conditional_headers(), {"If-None-Match": '"legacy"'})
+    entry.refresh({"etag": '"legacy"', "cache-control": "max-age=600"}, [])
     if not entry.is_fresh():
         raise AssertionError("304 did not extend freshness")
 

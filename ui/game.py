@@ -1,7 +1,7 @@
 """
 ui/game.py — Alien Defender, the offline easter egg (surfgambit://game).
 
-Compared with v1's game.py:
+Compared with legacy's game.py:
 
 * bindings are scoped to the canvas and removed on exit, instead of
   `bind_all` handlers that kept firing (and kept firing twice) after the game

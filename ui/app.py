@@ -6,7 +6,7 @@ Threading contract
 ------------------
 Only the main thread touches Tk. Worker threads call `app.ui(callable)`,
 which enqueues the callable; a single `after(30, ...)` pump drains the queue.
-That replaces v1's habit of calling `self.after(0, ...)` from a worker thread,
+That replaces legacy's habit of calling `self.after(0, ...)` from a worker thread,
 which is not thread-safe and produced the "main thread is not in main loop"
 traceback whenever a page finished loading.
 """
@@ -35,7 +35,7 @@ from ui.mascot import Mascot
 from ui.tab import BrowserTab
 
 APP_NAME = "SurfGambit"
-VERSION = "3.0"
+VERSION = "1.0"
 
 BG = "#1b1b1f"
 BG_ALT = "#24242a"
@@ -49,7 +49,7 @@ class BrowserApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.root = self
-        self.title(f"{APP_NAME} {VERSION}")
+        self.title(APP_NAME)
         self.geometry("1280x860")
         self.minsize(720, 480)
         self.configure(bg=BG)
@@ -420,7 +420,7 @@ class BrowserApp(tk.Tk):
                     tab, text=(label[:28] + "\u2026") if len(label) > 29 else label)
         except tk.TclError:
             pass
-        self.title(f"{label} - {APP_NAME} {VERSION}")
+        self.title(APP_NAME if label == APP_NAME else f"{label} - {APP_NAME}")
         if self.focus_get() is not self.address:
             self.address_var.set(tab.current_url)
         self.back_btn.state(["!disabled"] if tab.back_stack else ["disabled"])
@@ -907,7 +907,7 @@ class BrowserApp(tk.Tk):
     def show_about(self) -> None:
         messagebox.showinfo(
             f"About {APP_NAME}",
-            f"{APP_NAME} {VERSION}\n\nA browser built from scratch in Python: raw "
+            f"{APP_NAME}\n\nA browser built from scratch in Python: raw "
             "sockets and TLS, a hand-written tokenizer, CSS cascade, layout "
             "engine and canvas renderer.\n\nNo requests, no BeautifulSoup, no "
             "WebKit. Standard library only.",

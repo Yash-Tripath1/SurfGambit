@@ -1,5 +1,5 @@
 """
-layout.py — compatibility surface for the v1 layout API.
+layout.py — compatibility surface for the legacy layout API.
 
 The real engine is `core.layout` (block formatting, inline line boxes, tables).
 This module adapts the old entry points — `build_layout_tree` and
@@ -24,7 +24,7 @@ __all__ = [
 
 
 class _LegacyAdapter:
-    """Presents a v1 measurer (`measure_text`) as the v2 `TextMeasurer` API."""
+    """Presents a legacy measurer (`measure_text`) as the current `TextMeasurer` API."""
 
     def __init__(self, legacy) -> None:
         self.legacy = legacy

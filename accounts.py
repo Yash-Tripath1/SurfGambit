@@ -1,5 +1,5 @@
 """
-accounts.py — compatibility surface for the v1 account helpers.
+accounts.py — compatibility surface for the legacy account helpers.
 
 Implementation: `core.accounts` (PBKDF2-HMAC-SHA256, 600k iterations, 16-byte
 salt, constant-time comparison, atomic 0600 writes). HTTP basic-auth

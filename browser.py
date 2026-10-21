@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import sys
 
-VERSION = "3.0"
+VERSION = "1.0"
 
 
 def _fail(message: str) -> int:

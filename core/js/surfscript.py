@@ -1,5 +1,5 @@
 """
-core/js/surfscript.py — SurfScript 2.0, a real (small) JavaScript engine.
+core/js/surfscript.py — SurfScript, a real (small) JavaScript engine.
 
 This is the language core: lexer, parser, interpreter, values and built-ins.
 The DOM bindings live in `core/js/dom_bridge.py`, so the language can also be
@@ -24,7 +24,7 @@ Hard limits
   wall-clock time by default. Exceeding either raises `ScriptError`. Scripts
   never touch the network, the filesystem, or Python's `eval`.
 
-The old v1 API (`execute_script`, `evaluate_event_handler`, `find_node_by_id`)
+The old legacy API (`execute_script`, `evaluate_event_handler`, `find_node_by_id`)
 still works; see the compatibility surface in `surfscript.py` at the repo root.
 """
 
@@ -2256,7 +2256,7 @@ def execute_script(source: str, dom_root: Any,
                    trigger_layout_callback: Optional[Callable[[], None]] = None,
                    on_console: Optional[Callable[[str], None]] = None,
                    max_steps: int = 300_000) -> "JSEvaluator":
-    """v1-compatible: run one script against `dom_root`, return the evaluator."""
+    """legacy-compatible: run one script against `dom_root`, return the evaluator."""
     from core.js.dom_bridge import DocumentRuntime
 
     sink = (lambda level, text: on_console(text)) if on_console else None
@@ -2311,7 +2311,7 @@ def run_handler(node: Any, code: str, base_url: str = "",
 
 
 def __getattr__(name: str) -> Any:
-    """v1 aliases, resolved lazily to avoid a circular import."""
+    """legacy aliases, resolved lazily to avoid a circular import."""
     if name in ("DOMElementWrapper", "DOMStyleWrapper"):
         from core.js.dom_bridge import Element, StyleProxy
 
@@ -2329,7 +2329,7 @@ def find_node_by_id(root: Any, target_id: str) -> Any:
 
 
 class JSEvaluator:
-    """Compatibility shim: the v1 object that 'ran a script'."""
+    """Compatibility shim: the legacy object that 'ran a script'."""
 
     def __init__(self, runtime: Any = None) -> None:
         self.runtime = runtime

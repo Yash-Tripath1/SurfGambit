@@ -1,8 +1,8 @@
 """
-game.py — compatibility surface for the v1 game module.
+game.py — compatibility surface for the legacy game module.
 
 The game itself is `ui.game.SpaceInvaders` (scoped key bindings, cancellable
-animation loop, Escape to leave). The v1 class name is kept as an alias.
+animation loop, Escape to leave). The legacy class name is kept as an alias.
 """
 
 from __future__ import annotations

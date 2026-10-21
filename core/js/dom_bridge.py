@@ -623,7 +623,7 @@ class NavigatorProxy(JSObject):
     def js_get(self, name: str) -> Any:
         if name == "userAgent":
             return ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 SurfGambit/3.0")
+                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 SurfGambit")
         if name == "language":
             return "en-US"
         if name == "cookieEnabled":

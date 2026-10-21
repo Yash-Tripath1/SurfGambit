@@ -1,5 +1,5 @@
 """
-network.py — compatibility surface for the v1 transport.
+network.py — compatibility surface for the legacy transport.
 
 The transport is now `core.net.client.HTTPClient`: verified TLS by default,
 GET and POST, gzip/deflate, chunked transfer decoding, redirects with
@@ -26,7 +26,7 @@ __all__ = ["NetworkResponse", "NetworkError", "request", "request_post", "socket
 
 
 class NetworkResponse:
-    """v1-shaped view over a `core.net.client.Response`."""
+    """legacy-shaped view over a `core.net.client.Response`."""
 
     def __init__(self, response: Response) -> None:
         self._response = response
@@ -46,7 +46,7 @@ class NetworkResponse:
 
 
 def _settings() -> Dict[str, object]:
-    """v1 read settings.json from the working directory; keep that, then XDG."""
+    """legacy read settings.json from the working directory; keep that, then XDG."""
     for path in ("settings.json", data_path("settings.json")):
         try:
             with open(path, "r", encoding="utf-8") as handle:

@@ -1,9 +1,9 @@
 """
-surfscript.py — compatibility surface for the v1 scripting API.
+surfscript.py — compatibility surface for the legacy scripting API.
 
 The interpreter now lives in `core.js.surfscript`, wired to the engine's real
 DOM (`core.dom.tree.HTMLNode`) instead of a private copy of it. This module
-keeps the documented v1 names so existing code keeps working:
+keeps the documented legacy names so existing code keeps working:
 
     execute_script(source, dom_root, trigger_layout_callback)
     evaluate_event_handler(handler_code, dom_root, trigger_layout_callback)

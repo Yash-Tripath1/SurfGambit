@@ -1,5 +1,5 @@
 """
-cookies.py — compatibility surface for the v1 cookie API.
+cookies.py — compatibility surface for the legacy cookie API.
 
 The RFC 6265 implementation lives in `core.net.cookies`: domain-match,
 public-suffix rejection, path-boundary matching, Max-Age=0 deletion, secure
@@ -20,7 +20,7 @@ class CookieJar(_CoreCookieJar):
     def __init__(self, filepath: Optional[str] = None) -> None:
         super().__init__(filepath)
 
-    # -- v1 method names --------------------------------------------------
+    # -- legacy method names --------------------------------------------------
     def extract_cookies(self, response_url: str,
                         header_tuples: List[Tuple[str, str]]) -> None:
         self.store_from_headers(response_url, header_tuples)

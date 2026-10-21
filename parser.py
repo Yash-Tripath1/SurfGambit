@@ -1,5 +1,5 @@
 """
-parser.py — compatibility surface for the v1 HTML/CSS parser API.
+parser.py — compatibility surface for the legacy HTML/CSS parser API.
 
 The implementation now lives in `core.dom` (tokenizer + tree builder) and
 `core.style` (CSS parsing and the cascade). This module keeps the old names
@@ -26,14 +26,14 @@ __all__ = [
 
 
 class HTMLParser:
-    """Drop-in replacement for the v1 parser (same constructor/parse shape)."""
+    """Drop-in replacement for the legacy parser (same constructor/parse shape)."""
 
     def __init__(self, html_text: str) -> None:
         self.html_text = html_text or ""
 
     def parse(self) -> HTMLNode:
         document = _parse(self.html_text)
-        # v1 returned a synthetic root tagged "html" whose only element child
+        # legacy returned a synthetic root tagged "html" whose only element child
         # was the real <html>. Keep that shape so existing callers, which
         # index children[0], keep working.
         root = HTMLNode("html")

@@ -28,7 +28,7 @@ browser.py                entry point (creates the app)
 │   ├── mascot.py         the crab
 │   └── game.py           Space Invaders
 │
-├── tests/run.py          57 self-checks (`python -m tests.run`)
+├── tests/run.py          self-checks (`python -m tests.run`)
 └── docs/                 this file, screenshots
 ```
 
@@ -113,8 +113,8 @@ Measured on `en.wikipedia.org/wiki/Cat` (23 626 boxes):
 
 | | items created | paint time |
 |---|---:|---:|
-| full page (v2 behaviour) | 41 804 | 705 ms |
-| culled band (v3) | ~1 600 | 30 ms |
+| full page, no culling | 41 804 | 705 ms |
+| culled band | ~1 600 | 30 ms |
 
 Search hits are counted in a separate pass over the whole tree, so "12 matches"
 stays correct even though only the visible slice is painted.
@@ -156,7 +156,7 @@ same pages render and `<script>` is ignored.
 ## Testing
 
 ```
-python -m tests.run              # 57 checks, no network, no display
+python -m tests.run              # no network, no display
 python -m tests.run js paint     # one or more groups
 python -m tests.run --verbose
 ```

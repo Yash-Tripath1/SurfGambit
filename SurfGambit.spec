@@ -16,8 +16,8 @@ core_modules = [
     "core.style", "core.style.css", "core.style.selectors", "core.style.cascade",
     "core.layout", "core.layout.box", "core.layout.block", "core.layout.inline",
     "core.layout.text", "core.layout.table", "core.layout.flex", "core.layout.grid",
-    "core.net", "core.net.client", "core.net.cookies",
-    "core.js", "core.js.surfscript",
+    "core.net", "core.net.client", "core.net.cookies", "core.net.cache",
+    "core.js", "core.js.surfscript", "core.js.dom_bridge",
 ]
 ui_modules = [
     "ui.app", "ui.tab", "ui.renderer", "ui.pages", "ui.mascot", "ui.game",

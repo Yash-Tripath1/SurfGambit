@@ -2,7 +2,7 @@
 ui/mascot.py — the little alien from the welcome page, on the toolbar.
 
 The animation reads its state from a callback instead of the settings file:
-v1 re-read settings from disk inside every animation tick (four times a
+legacy re-read settings from disk inside every animation tick (four times a
 second, forever), which is both slow and a good way to see torn JSON.
 """
 

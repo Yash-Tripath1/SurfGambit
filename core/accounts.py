@@ -1,10 +1,10 @@
 """
 core/accounts.py — local profiles for the browser's own pages.
 
-Security posture (deliberately different from v1):
+Security posture (deliberately different from legacy):
 
   * Passwords are hashed with **PBKDF2-HMAC-SHA256, 600 000 iterations**, a
-    random 16-byte salt per user, and compared in constant time. v1 used one
+    random 16-byte salt per user, and compared in constant time. legacy used one
     round of salted SHA-256, which is ~10 million guesses/second on a GPU.
   * Passwords are never stripped or truncated, never put in a URL, and never
     written to disk in any recoverable form.
@@ -43,7 +43,7 @@ class AccountStore:
         if not isinstance(self._data, dict):
             self._data = {"version": 2, "users": {}}
         self._data.setdefault("users", {})
-        # v1 files stored {"salt": ..., "hash": ...} with no iteration count.
+        # legacy files stored {"salt": ..., "hash": ...} with no iteration count.
         self._data.setdefault("version", 2)
         self._sessions: Dict[str, float] = {}
 
@@ -144,7 +144,7 @@ class AccountStore:
 # ---------------------------------------------------------------------------
 # Module-level compatibility API
 # ---------------------------------------------------------------------------
-# v1 exposed bare functions operating on a single accounts.json. They are kept
+# legacy exposed bare functions operating on a single accounts.json. They are kept
 # (and implemented on top of AccountStore) because outside code and the audit
 # harness import them. Stored HTTP credentials are **read** for migration but
 # never written: see `save_domain_credentials`.
@@ -196,7 +196,7 @@ def save_domain_credentials(domain: str, username: str, password: str) -> None:
     """
     Remember an HTTP basic-auth pair **for this session only**.
 
-    v1 wrote these to accounts.json, first XOR-"encrypted", then base64. Both
+    legacy wrote these to accounts.json, first XOR-"encrypted", then base64. Both
     are readable by anyone who can read the file, so this version keeps them
     in memory and asks again next launch.
     """
@@ -213,8 +213,8 @@ def get_domain_credentials(domain: str) -> Optional[Tuple[str, str]]:
 
     Accepts the two shapes found in the wild:
 
-      * v2: {"username": ..., "password": ...}
-      * v1: "Basic <base64>" (bare string) - parsed for migration, never written
+      * current: {"username": ..., "password": ...}
+      * legacy: "Basic <base64>" (bare string) - parsed for migration, never written
     """
     domain = (domain or "").strip().lower()
     if not domain:

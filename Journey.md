@@ -157,25 +157,29 @@ Before this project, "a browser fetches webpages" was the extent of my mental mo
 
 ## What's next
 
-v2 will be built with Electron/WebView, the "easy" way. As a direct comparison. The plan is to write about what changes, what's the same, and what you actually lose when you skip the hard parts.
+The obvious next experiment is the opposite one: build the same browser with
+Electron/WebView, the "easy" way, and write about what changes, what stays the
+same, and what you actually lose when you skip the hard parts.
 
-SurfGambit v1 is done.
+For now the browser you can run is the one described below — still from
+scratch, still nothing borrowed.
 
 ---
 
-*Built by Anadi Tripathi (Yash): student, builder, person who thought writing a browser from scratch in two weeks was a reasonable idea *
+*Built by Anadi Tripathi: student, builder, person who thought writing a browser from scratch in two weeks was a reasonable idea.*
 
 ---
 
-# v2.0 — the rewrite (Oct 2026)
+# The rewrite
 
-v1 was "a browser that works on simple pages". This is the pass that went
-through the whole thing with a critical eye, wrote down every defect, and then
-fixed them one by one, testing each fix instead of assuming.
+Writing a browser that works on simple pages is one thing. Going back through it
+with a critical eye, writing down every defect and fixing them one at a time —
+testing each fix instead of assuming — is the part that actually taught me how
+the engine works.
 
-## What was actually broken in v1
+## What was actually broken
 
-An audit of the v1 tree turned up 15 reproducible defects. The worst of them:
+An audit of the first tree turned up 15 reproducible defects. The worst of them:
 
 | # | Defect | Why it mattered |
 | --- | --- | --- |
@@ -195,7 +199,7 @@ in `surfgambit://` pages, a font-cache bug that underlined every link on the
 page, worker threads calling `after()`, and a game whose `bind_all` handlers
 outlived the game.
 
-## What v2 changes
+## What changed
 
 The engine moved into two packages — `core/` (no Tk imports, fully testable)
 and `ui/` (Tk only). The old module names stay on disk as thin compatibility
@@ -203,7 +207,7 @@ shims, so `import parser`, `import layout`, `import network` and friends still
 work exactly as before.
 
 - **HTML**: a real state machine — quoted attributes, comments, implied
-  `html/head/body`, RAWTEXT/RCDATA, entity decoding, iterative builder that
+  `html/head/body`, RAWTEXT/RCDATA, entity decoding, an iterative builder that
   survives 20,000 levels of nesting.
 - **CSS**: a real tokenizer (strings with braces, nested `@media`/`@supports`,
   `!important`), correct origin/specificity/source order, inheritance,
@@ -211,8 +215,8 @@ work exactly as before.
   actually fetched and cascaded.
 - **Layout**: block (collapsing margins, `auto` centring, anonymous blocks),
   inline (line boxes, baselines, `justify`, `white-space`), inline-block,
-  tables with `colspan`, **flexbox**, and **CSS grid** — Wikipedia's Vector
-  skin is a grid, and now it renders as one.
+  tables with `colspan`, flexbox, and CSS grid — Wikipedia's Vector skin is a
+  grid, and now it renders as one.
 - **Network**: GET *and* POST, verified TLS, gzip/deflate, chunked, redirects
   with method rewriting and per-hop cookies.
 - **Cookies**: RFC 6265 — domain match, public-suffix rejection, path
@@ -220,58 +224,45 @@ work exactly as before.
 - **Security**: PBKDF2-HMAC-SHA256 (600k rounds) for local profiles; stored
   HTTP passwords removed entirely; sanitised download paths; escaped output on
   every internal page.
-- **Scripting**: `core/js` — a documented JavaScript subset bound to the real
-  DOM, off by default.
+- **Scripting**: `core/js` — a JavaScript subset bound to the real DOM, off by
+  default.
 - **UI**: menus, real shortcuts, per-tab history, find with match count, zoom
   that re-lays-out, text selection, save page, view source, dev tools, and one
   UI queue so no worker thread ever touches Tk.
 
-## How it was verified
+## Then the parts that were still on paper
 
-- `python -m tests.run` — 41 headless engine checks, no network, no display.
-- A 15-point reproduction harness that returned 15 `[BUG]` on v1 and 0 on v2.
-- Live rendering in Xvfb: example.com, text.npr.org, news.ycombinator.com,
-  en.wikipedia.org/wiki/Cat, github.com — screenshots compared against v1.
+Three things had been written down and not built: speed, scripting, and the
+small product details that make a browser feel finished.
 
-v1's own roadmap ("floats, percentage widths, cookie sessions on restart") is
-mostly done; what is still deliberately out of scope is a real JS engine,
-`position: absolute/fixed`, floats, transforms and WebP/AVIF decoding.
+**Speed.** The honest measurement: opening `en.wikipedia.org/wiki/Cat` produced
+23 626 layout boxes, 41 804 canvas items and a 705 ms paint, and every scroll
+step paid for all of it. The renderer now takes a viewport band and paints only
+what intersects it, the tab keeps 2.5 screens of slack so normal scrolling is
+native Tk scrolling, and leaving the band triggers one culled repaint — about
+30 ms and 1 600 items. Same page, 23× fewer canvas items. Around that: a real
+thread pool instead of a thread per image, an on-disk HTTP cache with
+`If-None-Match` revalidation, streamed downloads with `Content-Length`
+validation, and history writes moved off the UI thread.
 
-*Built by Yash Tripathi.*
-
----
-
-## v3.0 — the phases the plan called "later"
-
-2.0 fixed what was broken. 3.0 did the three phases that were still on paper.
-
-**Phase 2, performance.** The honest measurement: opening
-`en.wikipedia.org/wiki/Cat` produced 23 626 layout boxes, 41 804 canvas items
-and a 705 ms paint, and every scroll step paid for all of it. The renderer now
-takes a viewport band and paints only what intersects it, the tab keeps 2.5
-screens of slack so normal scrolling is native Tk scrolling, and leaving the
-band triggers one culled repaint (~30 ms, ~1 600 items). Same page, 23× fewer
-canvas items.
-
-Around that: a real `ThreadPoolExecutor(8)` instead of a thread per image, an
-on-disk HTTP cache with `If-None-Match` revalidation, streamed downloads with
-`Content-Length` validation, and history writes moved off the UI thread.
-
-**Phase 3, SurfScript.** The 1.x interpreter understood `let`, arithmetic and
+**Scripting.** The first interpreter understood `let`, arithmetic and
 `document.getElementById`. It could not run a `for` loop. It is now a lexer,
 recursive-descent parser and tree-walking interpreter for a documented subset:
-loops, functions, closures, recursion, arrays, objects, ternary, logical
-operators, comments, string and array methods, `Math`/`JSON`, plus a DOM with
-`createElement`, `appendChild`, `classList`, `style`, `addEventListener`,
-bubbling events, inline `onclick` and timers. Every script runs with a step and
-wall-clock budget and no access to the network or the filesystem. There is a
-`surfgambit://demo` page that exercises all of it, and you can click it.
+loops, functions, closures, recursion, arrays, objects, ternary, logical and
+bitwise operators, regular expressions, `new`, `Date`, `Math`, `JSON`,
+`setTimeout`/`setInterval`, plus a DOM with `createElement`, `appendChild`,
+`classList`, `style`, `addEventListener`, bubbling events and inline `onclick`.
+Every script runs with a step and wall-clock budget and no access to the network
+or the filesystem. `surfgambit://demo` exercises all of it, and you can click it.
 
-**Phase 4, product.** Download manager with progress and cancel (`Ctrl+J`), a
-JavaScript console REPL that evaluates in the page's own context, a Network tab
-that shows every request and cache hit, save-image and inspect-element in the
-context menu, a loading spinner, 57 self-checks, GitHub Actions, and
-`docs/ARCHITECTURE.md`.
+**Product.** Download manager with progress and cancel, a JavaScript console
+that evaluates in the page's own context, a network panel that lists every
+request and cache hit, save-image and inspect-element in the context menu, a
+loading spinner, a test suite that runs without a screen, and continuous
+integration.
 
-The lesson 3.0 taught: culling is the whole game. A canvas can hold a page of
-any length if you stop pretending it has to hold all of it at once.
+The lesson the performance work taught: culling is the whole game. A canvas can
+hold a page of any length if you stop pretending it has to hold all of it at
+once.
+
+*Built by Anadi Tripathi.*

@@ -1,12 +1,14 @@
-# 🌐 SurfGambit Browser
+# 🌐 SurfGambit
 
-> A web browser built completely from scratch in Python. No Chromium. No WebView. No borrowed rendering engines. Just raw sockets, a custom HTML/CSS parser, a layout engine, and a pixel painter drawing everything onto a Tkinter canvas.
+> A web browser built completely from scratch in Python. No Chromium. No WebView. No borrowed
+> rendering engines. Just raw sockets, a hand-written HTML/CSS parser, a layout engine, and a
+> canvas renderer that paints every pixel itself.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-57%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/self--checks-passing-brightgreen?style=flat-square)
 
 ![SurfGambit on text.npr.org](docs/screenshots/npr.png)
 
@@ -16,91 +18,92 @@
 
 ## What is this?
 
-SurfGambit is a desktop web browser that opens real internet connections, parses
-HTML character by character, runs a real CSS cascade, solves layout geometry
-itself, and paints every pixel on screen through its own rendering pipeline.
+SurfGambit is a desktop web browser that opens real internet connections, parses HTML character by
+character, runs a real CSS cascade, solves layout geometry itself, and paints every pixel on screen
+through its own rendering pipeline.
 
-It is not fast and it is not Chrome. But every line is written from scratch, it
-is standard-library only, and it renders real websites.
-
----
-
-## What changed in 3.0
-
-3.0 finishes the engine work started in 2.0 and turns SurfScript into something
-you can actually build against.
-
-**Performance (Phase 2)**
-
-| Area | 2.0 | 3.0 |
-| --- | --- | --- |
-| Painting | every box painted, every time | **viewport culling** — only the visible band becomes canvas items. `en.wikipedia.org/wiki/Cat` (23 626 boxes): 41 804 canvas items / 705 ms → ~1 600 items / 30 ms |
-| Scrolling | full redraw on every scroll | native Tk scrolling inside a 2.5-screen band, one culled repaint when you leave it |
-| HTTP | one request at a time | `ThreadPoolExecutor(8)` for resources + **disk cache** (`<sha1>.meta`/`.body`, 64 MiB, LRU) with `If-None-Match` / `If-Modified-Since` revalidation and `304` handling |
-| Subresources | re-downloaded on every visit | served from cache; Reload (`Ctrl+R`) forces a refresh |
-| History | JSON write on every visit | debounced on a writer thread, flushed on exit |
-| Downloads | buffered in memory | streamed to disk in 64 KiB chunks with progress, cancel and `Content-Length` validation |
-
-**Scripting (Phase 3)** — SurfScript is now a real interpreter, not a DOM-tweak
-toy: `if/else`, `while`, `for (;;)`, `for…of`, functions, closures, recursion,
-arrays, objects, `&&`/`||`, ternary, compound assignment, `++`/`--`, comments,
-string/array methods, `Math`, `JSON`, `parseInt`, and a DOM with
-`createElement` / `appendChild` / `classList` / `style` / `addEventListener` /
-`querySelectorAll` / bubbling events / inline `onclick` / `setInterval`.
-Every script runs inside a step and wall-clock budget, with no network or
-filesystem access. Try `surfgambit://demo` (Settings → JavaScript → On).
-
-**Product (Phase 4)**
-
-- **Download manager** (`Ctrl+J`) with live progress, size and a Cancel button
-- **DevTools**: JS **console REPL** (evaluates in the page's own context), new
-  **Network** tab (every request with status, time, bytes, cache hits), DOM
-  inspector and layout dump
-- richer context menu: open image, save image, inspect element, copy link
-- loading spinner in the status bar, per-tab titles, `docs/ARCHITECTURE.md`
-- **57 self-checks** (`python -m tests.run`) and GitHub Actions on Python
-  3.9 / 3.11 / 3.12
+It is not fast and it is not Chrome. But every line is written from scratch, it is standard-library
+only, and it renders real websites. The point of the project is to find out — concretely, in code —
+what a browser actually does between a TCP socket and a lit pixel.
 
 ---
 
-## What changed in 2.0
+## How it works
 
-Version 2.0 is a ground-up rewrite of the engine behind the same UI. The old
-single-file modules are kept as thin compatibility layers, so code that imported
-`parser`, `layout`, `network`, `cookies`, `accounts`, `css_compiler`,
-`surfscript` or `game` keeps working.
+```
+URL  ──▶  HTTPClient (raw socket + TLS, gzip, chunked, redirects, disk cache)
+     ──▶  Tokenizer  (state machine, implied tags, RAWTEXT/RCDATA, entities)
+     ──▶  DOM        (iterative tree builder, safe on deeply nested pages)
+     ──▶  Style      (CSS tokenizer, @media, selectors, specificity, inheritance)
+     ──▶  Layout     (box tree: block, inline, table, flex, grid)
+     ──▶  Renderer   (Tk canvas, viewport culling, form widgets)
+```
 
-**Engine**
+Nothing is delegated. The only things the browser borrows are the operating system's socket
+implementation, its TLS library, and Tk's drawing primitives.
 
-| Area | 1.x | 2.0 |
-| --- | --- | --- |
-| HTML | regex-ish tag scan, `>` inside quotes broke it | spec-shaped state machine: quoted attributes, comments, bogus tags, implied `html/head/body`, RAWTEXT/RCDATA (`<script>`, `<style>`, `<textarea>`, `<title>`), entity decoding, iterative builder safe at 10k+ depth |
-| CSS | `([^{]+)\{([^}]+)\}` regex, no `@media` | real tokenizer: comments, strings with braces, nested `@media`/`@supports`, `!important`, correct origin + specificity + source order, inheritance, shorthand expansion (`margin`, `padding`, `border`, `font`, `background`, `text-decoration`, `list-style`), `em`/`rem`/`%`/`vh`/`vw` units |
-| External CSS | discarded | `<link rel=stylesheet>` fetched, parsed and cascaded |
-| Layout | block + inline only | block (collapsing margins, `auto` centring, `max-width`, anonymous blocks), inline (line boxes, baselines, `text-align: justify`, `white-space: pre/pre-wrap/pre-line`, `white-space: nowrap`), inline-block, tables (colspan, shrink-to-fit), **flexbox** and **CSS grid** |
-| Scripting | none | `core/js` — a documented JavaScript subset (`let/const`, arithmetic, `document.getElementById/querySelector/querySelectorAll`, `textContent`, `innerHTML`, `style.*`, `classList`, `console.log`), opt-in in Settings |
-| Network | GET only, unverified TLS | GET **and** POST (urlencoded + multipart), verified TLS by default, gzip/deflate, chunked decoding, 10-hop redirects with correct method rewriting, per-hop cookies and Referer, truncation detection |
-| Cookies | any site could set `.com` | RFC 6265: domain-match, public-suffix rejection, path boundaries, `Max-Age=0` deletion, `Secure`, atomic persistence |
-| Storage | JSON in the working directory | per-user data directory (`%APPDATA%`, `~/Library/Application Support`, `$XDG_DATA_HOME`, or `SURFGAMBIT_DATA_DIR`), atomic writes, corrupt files quarantined |
-| Accounts | salted SHA-256, one round | PBKDF2-HMAC-SHA256, 600 000 rounds, constant-time comparison, 0600 file. Stored HTTP passwords removed (session-only) |
-| Threading | `after()` called from worker threads | one UI queue drained on the main thread; stale responses dropped by generation counter |
-| Downloads | any URL auto-saved as `.exe`, silently overwriting | explicit "Save as", sanitised filenames, `(2)` suffixes, `.part` staging, recorded in `surfgambit://downloads` |
+---
+
+## What is inside
+
+**Transport**
+
+- HTTP/1.1 over raw TCP, TLS verified by default, `GET` and `POST` (urlencoded and multipart)
+- gzip/deflate, chunked transfer decoding, 10-hop redirects with correct method rewriting
+- per-hop cookies and `Referer`, truncation detection, streamed downloads with progress and cancel
+- an on-disk HTTP cache with `ETag` / `Last-Modified` revalidation, `304` handling and LRU eviction
+- RFC 6265 cookie jar: domain matching, public-suffix rejection, path boundaries, `Secure`, expiry
+
+**Parsing and style**
+
+- spec-shaped HTML tokenizer: quoted attributes, comments, bogus tags, implied `html/head/body`,
+  RAWTEXT and RCDATA elements, full entity decoding
+- CSS tokenizer that survives comments, strings containing braces, nested `@media` / `@supports`,
+  `!important`, shorthands, and every unit from `px` to `vh`
+- external stylesheets fetched and cascaded alongside inline ones
+
+**Layout and painting**
+
+- block flow with collapsing margins, `auto` centring and `max-width`; inline flow with line boxes,
+  baselines, justification and `white-space`; inline-block; tables with `colspan`; flexbox; CSS grid
+- **viewport culling**: only the visible band of a page becomes canvas items, so a 40 000 px document
+  scrolls as smoothly as a short one
+- live form controls — text fields, passwords, checkboxes, selects, buttons — that move with the page
+
+**Scripting — SurfScript**
+
+A small JavaScript engine written for this browser: lexer, recursive-descent parser, tree-walking
+interpreter, and a DOM binding onto the engine's own node tree.
+
+```js
+let total = 0;
+document.querySelectorAll('.row').forEach(function (row) {
+  total += Number(row.dataset.value);
+});
+document.getElementById('sum').textContent = 'Total: ' + total;
+```
+
+- language: `let/const/var`, `if/else`, `while`, `do`, `for (;;)`, `for…of`, functions and closures,
+  arrays and objects, `&&`/`||`/ternary, bitwise and shift operators, regex literals, `new`, `typeof`
+- built-ins: `Math`, `JSON`, `Date`, `RegExp`, `parseInt`/`parseFloat`, the usual string and array
+  methods, `setTimeout`/`setInterval`
+- DOM: `querySelector(All)`, `createElement`, `appendChild`, `classList`, `style`, `dataset`,
+  attributes, bubbling events, `preventDefault`/`stopPropagation`, inline `onclick`
+- sandboxed: every script runs under a step and wall-clock budget, with no network or filesystem
+  access. It is intentionally a subset — no `class`, `async/await`, modules or `eval`
 
 **Browser**
 
-- real menus, Ctrl+T/W/L/R/F/D/U/S, Alt+←/→, F11, F12
-- persistent tabs with full back/forward history per tab
-- find-in-page with live match count, zoom that actually re-lays-out
-- text selection + copy, right-click link menu, "Save page as…", "View source"
-- live form controls: text fields, passwords, checkboxes, selects, buttons, `GET` and `POST` submission
-- developer tools: DOM tree, layout box dump, script console
-- dark, consistent chrome on every platform
+- tabs with independent back/forward history, find-in-page, zoom that re-lays-out the page
+- bookmarks, history, downloads and local profiles behind `surfgambit://` pages
+- download manager with live progress and cancel; developer tools with a script console REPL,
+  a network panel (status, time, bytes, cache hits) and a DOM/layout inspector
+- text selection and copy, right-click link and image menus, view source, save page
+- dark, consistent chrome on every platform, and a small offline game for when the network is down
 
 ---
 
-## Installation
-
-### Run from source (recommended)
+## Getting started
 
 **Requirements:** Python 3.9+ with Tk. Nothing to `pip install`.
 
@@ -116,21 +119,22 @@ Open a URL straight from the command line:
 python browser.py https://news.ycombinator.com
 ```
 
-If Tk is missing: `sudo apt install python3-tk` (Debian/Ubuntu),
-`sudo dnf install python3-tkinter` (Fedora). It ships with the python.org
-installers on Windows and macOS.
+![SurfGambit's start page](docs/screenshots/welcome.png)
 
-### Run the .exe (Windows)
+<sub>The start page: engine status, quick links, and a search box that is really just the address
+bar.</sub>
 
-Download `SurfGambit.exe` from the releases page and double-click it.
+If Tk is missing: `sudo apt install python3-tk` (Debian/Ubuntu) or
+`sudo dnf install python3-tkinter` (Fedora). It ships with the python.org installers on Windows and
+macOS.
 
-> **Note:** Windows Defender may flag the .exe — it is an unsigned
-> PyInstaller binary, which is a known false positive. Build it yourself with
-> `pyinstaller SurfGambit.spec` if you prefer.
+**Windows executable:** download `SurfGambit.exe` from the releases page, or build it yourself with
+`pyinstaller SurfGambit.spec`. Windows Defender may flag it — it is an unsigned PyInstaller binary,
+which is a known false positive.
 
 ---
 
-## Project structure
+## Project layout
 
 ```
 SurfGambit/
@@ -140,7 +144,7 @@ SurfGambit/
 │   ├── style/              # CSS tokenizer, selector engine, cascade
 │   ├── layout/             # box tree, block, inline, table, flex, grid
 │   ├── net/                # HTTPClient, HTTPCache, RFC 6265 CookieJar
-│   ├── js/                 # JavaScript subset + DOM bridge
+│   ├── js/                 # SurfScript interpreter + DOM bridge
 │   ├── accounts.py         # local profiles (PBKDF2)
 │   ├── storage.py          # per-user data directory, atomic writes
 │   ├── store.py            # settings, bookmarks, history, downloads
@@ -154,11 +158,13 @@ SurfGambit/
 │   ├── mascot.py           # the alien
 │   └── game.py             # Alien Defender
 ├── parser.py layout.py network.py cookies.py accounts.py
-│   css_compiler.py surfscript.py game.py      # 1.x compatibility shims
-└── tests/                  # self-checks (python -m tests.run)
+│   css_compiler.py surfscript.py game.py      # compatibility shims
+├── docs/                   # architecture notes and screenshots
+├── tests/                  # self-checks (python -m tests.run)
+└── .github/workflows/      # continuous integration
 ```
 
-Data lives outside the repository:
+Browser data lives outside the repository:
 
 | OS | Location |
 | --- | --- |
@@ -173,20 +179,23 @@ Set `SURFGAMBIT_DATA_DIR` to override it.
 ## What it can handle
 
 Works reasonably well:
+
 - text-first sites (Hacker News, text.npr.org, example.com)
-- Wikipedia — including the Vector skin's grid layout
+- Wikipedia, including the Vector skin's grid layout
 - documentation sites and blogs with classic CSS
 - GitHub's marketing pages
 
-Still out of scope (deliberate):
-- a full JavaScript engine — SurfScript is a documented subset (no `class`,
-  `async/await`, regex literals, closures over loops with `var`, or modules)
+Deliberately out of scope:
+
 - `position: absolute/fixed`, `float`, transforms, animations, container queries
-- WebP/AVIF decoding (Tk only decodes PNG, GIF, PPM and PGM)
-- JavaScript-heavy skins: Wikipedia's Vector 2022 lays out better with
-  JavaScript **off** (the default). If a site's scripts rearrange the page,
-  View → *Reload without scripts* (`Ctrl+Shift+R`) renders it the plain way.
-- video/audio, WebSockets, HTTP/2 (the client speaks HTTP/1.1)
+- WebP/AVIF decoding (Tk only decodes PNG, GIF, PPM and PGM), audio and video
+- WebSockets and HTTP/2 — the client speaks HTTP/1.1
+- a complete JavaScript engine: SurfScript is a documented subset, and sites whose scripts depend on
+  the rest of the language render better with scripting switched off. **View → Reload without
+  scripts** (`Ctrl+Shift+R`) always gives the plain rendering
+
+If a page looks wrong, that is usually the honest boundary of the engine rather than a crash — the
+browser reports script errors in the developer console instead of failing silently.
 
 ---
 
@@ -197,12 +206,13 @@ Still out of scope (deliberate):
 | `Ctrl+T` / `Ctrl+W` | new tab / close tab |
 | `Ctrl+L` | focus the address bar |
 | `Ctrl+R` / `F5` | reload |
+| `Ctrl+Shift+R` | reload without running page scripts |
 | `Ctrl+F` | find in page |
 | `Ctrl+J` | download manager |
 | `Ctrl+D` | bookmark this page |
 | `Ctrl+U` | view source |
 | `Ctrl+S` | save page |
-| `Ctrl+` `+` / `-` / `0` | zoom in / out / reset |
+| `Ctrl` `+` / `-` / `0` | zoom in / out / reset |
 | `Alt+←` / `Alt+→` | back / forward |
 | `F11` / `F12` | full screen / developer tools |
 | `Ctrl+Q` | quit |
@@ -212,21 +222,15 @@ Still out of scope (deliberate):
 ## Tests
 
 ```bash
-python -m tests.run            # 57 checks, no network, no display
+python -m tests.run            # no network, no display needed
 python -m tests.run js cache   # a subset by group
 python -m tests.run --verbose
 ```
 
-Groups: `dom css layout cookies net cache paint js accounts storage store
-downloads shims`. The suite forces a temporary `SURFGAMBIT_DATA_DIR`, so it can
-never touch your real profile. `.github/workflows/tests.yml` runs it on Python
-3.9, 3.11 and 3.12.
-
-## Architecture
-
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) walks through the pipeline
-(bytes → DOM → cascade → layout → canvas), the threading contract, the HTTP
-cache, viewport culling and the SurfScript interpreter.
+The suite covers the DOM and tokenizer, the cascade, layout geometry, cookies, the HTTP client and
+cache, painting and culling maths, the script interpreter, accounts, storage, the download manager and
+the compatibility shims. It forces a temporary `SURFGAMBIT_DATA_DIR`, so it can never touch a real
+profile. Continuous integration runs it on several Python versions on every push.
 
 ---
 
@@ -235,23 +239,23 @@ cache, viewport culling and the SurfScript interpreter.
 | | |
 | --- | --- |
 | ![Wikipedia](docs/screenshots/wikipedia.png) | ![SurfScript demo](docs/screenshots/surfscript-demo.png) |
-| Wikipedia's Vector layout, 23 626 boxes, culled to 176 painted | `surfgambit://demo` — counters, timers, DOM building |
+| Wikipedia's Vector layout, culled to the visible band | `surfgambit://demo` — counters, timers, DOM building |
 | ![DevTools](docs/screenshots/devtools.png) | ![Settings](docs/screenshots/settings.png) |
-| Console REPL + network panel + cache stats | Settings, including the JavaScript switch |
+| Console REPL, network panel and cache stats | Settings, including the scripting switch |
 
 ---
 
 ## Why build this?
 
-To understand how browsers actually work — not at a "it parses HTML" level, but
-at a "here is exactly how a raw TCP socket turns into pixels on a screen" level.
+To understand how browsers actually work — not at a "it parses HTML" level, but at a "here is exactly
+how a raw TCP socket turns into pixels on a screen" level.
 
 ---
 
 ## Built with
 
-- Python 3 standard library only: `socket`, `ssl`, `tkinter`, `gzip`, `zlib`,
-  `hashlib`, `threading`, `urllib.parse`
+- Python 3 standard library only: `socket`, `ssl`, `tkinter`, `gzip`, `zlib`, `hashlib`, `threading`,
+  `urllib.parse`
 - Zero external dependencies
 
 ---
@@ -260,4 +264,4 @@ at a "here is exactly how a raw TCP socket turns into pixels on a screen" level.
 
 MIT — see [LICENSE](LICENSE).
 
-*Made by Yash Tripathi*
+*Made by Anadi Tripathi*

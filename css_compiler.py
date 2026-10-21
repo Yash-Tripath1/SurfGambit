@@ -1,5 +1,5 @@
 """
-css_compiler.py — compatibility surface for the v1 CSS helper.
+css_compiler.py — compatibility surface for the legacy CSS helper.
 
 The cascade moved to `core.style` (tokenizer, selector engine with real
 specificity, inheritance, shorthand expansion, @media support). This module

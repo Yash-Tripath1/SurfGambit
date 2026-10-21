@@ -2,7 +2,7 @@
 ui/pages.py — the browser's own pages.
 
 Every value interpolated into these templates goes through ``html.escape``.
-v1 pasted usernames, bookmark titles, history URLs and search queries straight
+legacy pasted usernames, bookmark titles, history URLs and search queries straight
 into markup, which meant a bookmark titled `<script>` became markup.
 """
 
@@ -83,7 +83,7 @@ def _nav() -> str:
 # ---------------------------------------------------------------------------
 
 def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
-                 version: str = "3.0") -> str:
+                 ) -> str:
     if profile:
         greeting = (f'<p class="sub">Signed in as <strong>{esc(profile)}</strong> &middot; '
                     f'<a href="surfgambit://logout">Sign out</a></p>')
@@ -115,7 +115,7 @@ def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
         <tr><td>CSS cascade</td><td class="ok">specificity, inheritance, @media, shorthands</td></tr>
         <tr><td>Layout</td><td class="ok">box model, inline flow, tables, collapsing margins</td></tr>
         <tr><td>Network</td><td class="ok">GET/POST, TLS verified, gzip, chunked, HTTP cache</td></tr>
-        <tr><td>Scripting</td><td class="ok">SurfScript 2.0 &mdash; loops, functions, DOM events</td></tr>
+        <tr><td>Scripting</td><td class="ok">SurfScript &mdash; loops, functions, DOM events</td></tr>
         <tr><td>Painting</td><td class="ok">viewport culling, 40 000 px pages scroll at full speed</td></tr>
       </table>
     </div>
@@ -132,7 +132,7 @@ def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
       <p class="muted">Type a search phrase in the address bar to search the web.</p>
     </div>
     <p class="muted" style="text-align:center; margin-top:34px;">
-      SurfGambit {esc(version)} &middot; built from scratch in Python
+      A browser built from scratch in Python
     </p>
     """
     return _document("SurfGambit", body)
