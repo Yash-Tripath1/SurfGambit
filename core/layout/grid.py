@@ -1,5 +1,5 @@
 """
-core/layout/grid.py — CSS grid, the subset real sites use.
+core/layout/grid.py: CSS grid, the subset real sites use.
 
 Wikipedia's whole skin is a three-row, two-column grid; without grid support
 the site renders as a single vertical pile, which is exactly the complaint

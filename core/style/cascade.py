@@ -1,5 +1,5 @@
 """
-core/style/cascade.py — user-agent stylesheet, presentational hints, cascade
+core/style/cascade.py: user-agent stylesheet, presentational hints, cascade
 and inheritance.
 
 This is what turns a DOM + a pile of rules into a *computed style* per element:
@@ -737,7 +737,7 @@ def resolve_font_family(raw: Optional[str], available: Optional[set] = None) -> 
             return _GENERIC_FALLBACKS[key][-2]
         if not available or name.lower() in available:
             return name
-    # Nothing matched — use the generic of the last entry if it is one.
+    # Nothing matched: use the generic of the last entry if it is one.
     for name in reversed(candidates):
         if name.lower() in _GENERIC_FALLBACKS:
             return _GENERIC_FALLBACKS[name.lower()][0]

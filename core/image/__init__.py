@@ -1,11 +1,11 @@
 """
-core/image — turning fetched bytes into something Tk can draw.
+core/image: turning fetched bytes into something Tk can draw.
 
 Tk's PhotoImage understands PNG, GIF, PPM and PGM. The web, meanwhile, sends
 JPEG more than anything else. This package closes that gap:
 
-* `sniff()` recognises the format from its magic bytes (never the URL — plenty
-  of servers mislabel images).
+* `sniff()` recognises the format from its magic bytes, never the URL: plenty
+  of servers mislabel images.
 * `to_png()` returns PNG bytes ready for `PhotoImage(data=...)`.
 * `decode_for_display()` is the single entry point used by the tab: it sniffs,
   decodes, honours EXIF rotation, caps the pixel size, and reports the result.

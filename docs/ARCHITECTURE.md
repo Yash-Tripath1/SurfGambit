@@ -8,7 +8,7 @@ Tk; nothing in `ui/` re-implements engine rules.
 ```
 browser.py                entry point (creates the app)
 │
-├── core/                 the engine — no Tk, no UI, unit-testable
+├── core/                 the engine: no Tk, no UI, unit-testable
 │   ├── net/              client.py  cache.py  cookies.py
 │   ├── dom/              tokenizer.py  tree.py  entities.py  parser.py
 │   ├── style/            css.py  selectors.py  cascade.py  values.py
@@ -26,8 +26,8 @@ browser.py                entry point (creates the app)
 │   ├── tab.py            one browsing context: load, layout, paint, scroll
 │   ├── renderer.py       layout tree → canvas items (culled)
 │   ├── pages.py          the surfgambit:// internal pages
-│   ├── mascot.py         the crab
-│   └── game.py           Space Invaders
+│   ├── mascot.py         the alien on the toolbar and start page
+│   └── game.py           Alien Defender (surfgambit://game)
 │
 ├── tests/run.py          self-checks (`python -m tests.run`)
 └── docs/                 this file, screenshots
@@ -82,8 +82,8 @@ shutdown guarantees the last visit lands on disk.
 
 `core/net/cache.py` is a two-level cache:
 
-* **memory** — `OrderedDict` LRU keyed by URL (300 entries);
-* **disk** — `<data>/cache/http/<sha1>.meta|.body`, atomic writes, evicted
+* **memory**: `OrderedDict` LRU keyed by URL (300 entries);
+* **disk**: `<data>/cache/http/<sha1>.meta|.body`, atomic writes, evicted
   oldest-first when the directory passes 64 MiB or 800 entries.
 
 Freshness follows the useful subset of RFC 9111: `Cache-Control: max-age`,
@@ -105,7 +105,7 @@ owns the pixels rather than handing them to Tk:
 | format | decoder | notes |
 | --- | --- | --- |
 | JPEG | `jpeg.py` | baseline + progressive, restart markers, CMYK, 1/2/4/8 scaled IDCT |
-| PNG  | `png.py` | colour types 0/2/3/4/6, 1–16 bit, tRNS, Adam7, every filter |
+| PNG  | `png.py` | colour types 0/2/3/4/6, 1-16 bit, tRNS, Adam7, every filter |
 | BMP  | `bmp.py` | uncompressed 24/32-bit, top-down and bottom-up |
 | GIF  | Tk | passed through untouched |
 
@@ -113,12 +113,12 @@ owns the pixels rather than handing them to Tk:
 applies EXIF orientation, caps the pixel size, and returns an `ImageInfo` with
 PNG bytes for `PhotoImage` plus the packed RGB(A) buffer. The tab fetches and
 decodes on a worker thread, stores the result under the absolute URL, and the
-renderer asks `get_image_for(url, w, h)` for a photo of exactly the CSS box —
+renderer asks `get_image_for(url, w, h)` for a photo of exactly the CSS box;
 `resize_rgb()` + `png_from_rgb()` do the scaling, so an image never spills into
 its neighbours or leaves a letterbox gap. Both caches are LRU-bounded.
 
 Accuracy against Pillow on the reference corpus: mean absolute error 0.02
-(grey), 0.40 (4:4:4), 0.55 (photo), 5.70 (4:2:0, chroma smoothing) — i.e. the
+(grey), 0.40 (4:4:4), 0.55 (photo), 5.70 (4:2:0, chroma smoothing), i.e. the
 same picture to the eye. A 1280×800 photo decodes in 0.6 s at half scale.
 
 ## Search
@@ -160,31 +160,31 @@ stays correct even though only the visible slice is painted.
 
 `core/js/surfscript.py` is the language; `core/js/dom_bridge.py` is the DOM.
 
-* **Lexer** — hand-written scanner: numbers, strings with escapes, identifiers,
+* **Lexer**: hand-written scanner: numbers, strings with escapes, identifiers,
   `//` and `/* */` comments, longest-match operators.
-* **Parser** — recursive descent with the usual precedence ladder:
+* **Parser**: recursive descent with the usual precedence ladder:
   assignment → ternary → `||` → `&&` → equality → relational → additive →
   multiplicative → unary → postfix → call/member/index → primary.
   Statements: `let/const/var`, `if/else`, `while`, `do`, `for (;;)`,
   `for (x of y)`, `function`, `return`, `break`, `continue`, blocks.
-* **Interpreter** — tree-walking evaluator with lexical `Scope` chains,
+* **Interpreter**: tree-walking evaluator with lexical `Scope` chains,
   closures, `this`, `arguments`, a shared `BoundMethod` for prototype calls, and
   Python-implemented prototypes for strings, arrays, numbers and objects.
-* **Budget** — 300 000 steps and 1.5 s wall clock per script. A runaway `while
+* **Budget**: 300 000 steps and 1.5 s wall clock per script. A runaway `while
   (true)` raises `ScriptError` and is reported in the console panel; it never
   hangs the browser.
-* **DOM** — `getElementById`, `querySelector(All)` (backed by the same selector
+* **DOM**: `getElementById`, `querySelector(All)` (backed by the same selector
   engine the cascade uses), `createElement`, `createTextNode`, `appendChild`,
   `removeChild`, `insertBefore`, `classList`, `style` (camelCase → kebab-case),
   `textContent` / `innerText` / `innerHTML`, attributes, `dataset`, `children`,
   sibling/parent traversal, `addEventListener` / `removeEventListener`,
   `dispatchEvent`, `click()`.
-* **Events** — bubbling from the target to `<html>`, `preventDefault()` /
+* **Events**: bubbling from the target to `<html>`, `preventDefault()` /
   `stopPropagation()`, plus inline `onclick="…"` attributes with the element
   bound to `this`.
-* **Timers** — `setTimeout` / `setInterval` / `clearTimeout`. The tab schedules
+* **Timers**: `setTimeout` / `setInterval` / `clearTimeout`. The tab schedules
   them with Tk `after`, so they survive across repaints and stop on navigation.
-* **Sandbox** — no network, no filesystem, no `eval`, no `Function`. A page can
+* **Sandbox**: no network, no filesystem, no `eval`, no `Function`. A page can
   only reach the DOM it owns.
 
 Scripts are **opt-in** (Settings → JavaScript). When the setting is off, the
@@ -208,5 +208,5 @@ Python 3.9 / 3.11 / 3.12 (`.github/workflows/tests.yml`).
 No `position: absolute/fixed`, no `float`, no transforms or animations, no
 WebP/AVIF (Tk decodes PNG/GIF/PPM), no audio/video, no WebSockets, no HTTP/2, no
 `<iframe>`, and SurfScript is a documented subset rather than a JS engine. The
-README says the same thing in fewer words — the point is that the limits are
+README says the same thing in fewer words. The point is that the limits are
 declared, not discovered.

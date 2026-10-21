@@ -1,5 +1,5 @@
 """
-core/storage.py — where user data lives, and how it is written.
+core/storage.py: where user data lives, and how it is written.
 
 Previously every JSON file was opened by bare filename, i.e. relative to the
 current working directory. Launch the packaged .exe from `Program Files` and

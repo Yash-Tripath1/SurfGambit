@@ -1,11 +1,11 @@
 """
-core/net/cache.py — an on-disk HTTP cache with real revalidation.
+core/net/cache.py: an on-disk HTTP cache with real revalidation.
 
 Two levels:
 
-* **memory** — an OrderedDict LRU keyed by URL, so a repaint or a back
+* **memory**: an OrderedDict LRU keyed by URL, so a repaint or a back
   navigation never touches the disk;
-* **disk** — `<sha1>.meta` (JSON) + `<sha1>.body` per entry under
+* **disk**: `<sha1>.meta` (JSON) + `<sha1>.body` per entry under
   `<data dir>/cache/http`, written atomically and evicted oldest-first.
 
 Freshness follows RFC 9111's useful subset: `Cache-Control: max-age`,

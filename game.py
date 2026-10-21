@@ -1,5 +1,5 @@
 """
-game.py — compatibility surface for the legacy game module.
+game.py: compatibility surface for the legacy game module.
 
 The game itself is `ui.game.SpaceInvaders` (scoped key bindings, cancellable
 animation loop, Escape to leave). The legacy class name is kept as an alias.

@@ -1,5 +1,5 @@
 """
-core/accounts.py — local profiles for the browser's own pages.
+core/accounts.py: local profiles for the browser's own pages.
 
 Security posture (deliberately different from legacy):
 

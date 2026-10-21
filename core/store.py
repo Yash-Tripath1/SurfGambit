@@ -1,5 +1,5 @@
 """
-core/store.py — settings, bookmarks, history and the download list.
+core/store.py: settings, bookmarks, history and the download list.
 
 All four live in the per-user data directory (see core/storage.py) and are
 written atomically. Every load is defensive: a corrupt or hand-edited file

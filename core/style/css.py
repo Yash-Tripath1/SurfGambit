@@ -1,5 +1,5 @@
 r"""
-core/style/css.py — a real CSS tokenizer and rule parser.
+core/style/css.py: a real CSS tokenizer and rule parser.
 
 Replaces the single regex `([^{]+)\{([^}]+)\}` that silently destroyed every
 rule after the first `@media` block.
@@ -234,7 +234,7 @@ def _normalise_media(query: str) -> Optional[str]:
         else:
             kept.append(part)
     if not kept:
-        # `@media print` only — never applies on screen.
+        # `@media print` only: never applies on screen.
         return None if parts else ""
     return ",".join(kept)
 
@@ -307,7 +307,7 @@ class _Parser:
                 break
 
             if css[j] == ";":
-                # Statement at-rule (@import, @charset...) — ignore.
+                # Statement at-rule (@import, @charset...): ignore.
                 i = j + 1
                 continue
 
@@ -357,7 +357,7 @@ class _Parser:
         """
         Nested media contexts combine with `and`.
 
-        `None` means "no media condition" (top level), *not* "never matches" —
+        `None` means "no media condition" (top level), *not* "never matches";
         the "never matches" case is `_normalise_media` returning None, which is
         handled by the caller. Treating the two the same dropped every rule
         inside every @media block.

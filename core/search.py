@@ -1,5 +1,5 @@
 """
-core/search.py — the address bar's two jobs: turn input into a URL, and search.
+core/search.py: the address bar's two jobs: turn input into a URL, and search.
 
 Search engines have made plain HTTP clients unwelcome: Google now answers with a
 JavaScript shell, DuckDuckGo's HTML endpoint hands back a bot challenge, and

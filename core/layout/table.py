@@ -1,5 +1,5 @@
 """
-core/layout/table.py — table layout.
+core/layout/table.py: table layout.
 
 Implements the automatic table layout algorithm closely enough for the pages
 that actually still use tables (Hacker News, Wikipedia infoboxes, email-style

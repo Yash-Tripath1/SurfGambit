@@ -1,5 +1,5 @@
 """
-cookies.py — compatibility surface for the legacy cookie API.
+cookies.py: compatibility surface for the legacy cookie API.
 
 The RFC 6265 implementation lives in `core.net.cookies`: domain-match,
 public-suffix rejection, path-boundary matching, Max-Age=0 deletion, secure

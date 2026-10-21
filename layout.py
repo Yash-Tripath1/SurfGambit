@@ -1,9 +1,9 @@
 """
-layout.py — compatibility surface for the legacy layout API.
+layout.py: compatibility surface for the legacy layout API.
 
 The real engine is `core.layout` (block formatting, inline line boxes, tables).
-This module adapts the old entry points — `build_layout_tree` and
-`compute_layout(box, x, y, max_width, measurer)` — onto it, including
+This module adapts the old entry points (`build_layout_tree` and
+`compute_layout(box, x, y, max_width, measurer)`) onto it, including
 support for the old `TextMeasurer.measure_text(...)` protocol so existing
 callers and benchmarks keep working.
 """

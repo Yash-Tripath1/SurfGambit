@@ -1,5 +1,5 @@
 """
-core/layout/block.py — block formatting context and the layout entry point.
+core/layout/block.py: block formatting context and the layout entry point.
 
 Rules implemented:
 
@@ -317,9 +317,9 @@ def _geometry_is_sane(box: LayoutBox, slack: float = 2.0) -> bool:
 
     Real pages mix flex/grid with features this engine does not implement
     (`position: absolute`, `float`, container queries, `@supports` gating the
-    layout it actually uses). When the result would be visibly broken —
-    children escaping the container, siblings overlapping, zero-width boxes
-    that contain content — the container is re-laid-out as plain block flow,
+    layout it actually uses). When the result would be visibly broken (children
+    escaping the container, siblings overlapping, zero-width boxes that contain
+    content), the container is re-laid-out as plain block flow,
     which always produces a readable (if simpler) page.
     """
     left = box.content_x - slack

@@ -1,5 +1,5 @@
 """
-network.py — compatibility surface for the legacy transport.
+network.py: compatibility surface for the legacy transport.
 
 The transport is now `core.net.client.HTTPClient`: verified TLS by default,
 GET and POST, gzip/deflate, chunked transfer decoding, redirects with

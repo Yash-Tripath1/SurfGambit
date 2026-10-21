@@ -1,5 +1,5 @@
 """
-core/style/selectors.py — CSS selector parsing and matching.
+core/style/selectors.py: CSS selector parsing and matching.
 
 Supports the subset that actually shows up on real pages:
 
@@ -14,10 +14,10 @@ Supports the subset that actually shows up on real pages:
     A B   A > B   A + B   A ~ B     (descendant, child, adjacent, general sibling)
     ,     selector lists are split by the caller
 
-Specificity is the real (a, b, c) tuple — ids, classes/attrs/pseudos, types.
+Specificity is the real (a, b, c) tuple: ids, classes/attrs/pseudos, types.
 
 `:hover`, `:focus`, `:active`, `:visited` never match (we have no interaction
-state), so `a:hover { color: red }` simply loses to the base rule — which is
+state), so `a:hover { color: red }` simply loses to the base rule, which is
 the correct fallback behaviour, unlike matching it always.
 """
 

@@ -1,5 +1,5 @@
 """
-core/layout/inline.py — inline formatting context.
+core/layout/inline.py: inline formatting context.
 
 Turns a run of mixed inline content (text, `<b>`, `<a>`, images, inputs,
 `inline-block` boxes) into line boxes with:

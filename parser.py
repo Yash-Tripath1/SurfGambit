@@ -1,5 +1,5 @@
 """
-parser.py — compatibility surface for the legacy HTML/CSS parser API.
+parser.py: compatibility surface for the legacy HTML/CSS parser API.
 
 The implementation now lives in `core.dom` (tokenizer + tree builder) and
 `core.style` (CSS parsing and the cascade). This module keeps the old names

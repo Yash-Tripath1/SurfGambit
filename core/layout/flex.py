@@ -1,9 +1,9 @@
 """
-core/layout/flex.py — a practical subset of CSS flexible box layout.
+core/layout/flex.py: a practical subset of CSS flexible box layout.
 
 Modern pages are built out of flex containers: Wikipedia's skin, GitHub's
 header, almost every marketing page. Without flex support those pages do not
-"look simpler", they look broken — every column stacks and sidebars land on
+"look simpler", they look broken: every column stacks and sidebars land on
 top of the content.
 
 Implemented (the subset that covers the overwhelming majority of real pages):

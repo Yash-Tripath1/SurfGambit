@@ -1,5 +1,5 @@
 """
-core/dom/tokenizer.py — HTML tokenizer.
+core/dom/tokenizer.py: HTML tokenizer.
 
 A character-by-character state machine following the shape of the WHATWG
 tokenizer (data, tag open, tag name, attribute name/value, comment, doctype,

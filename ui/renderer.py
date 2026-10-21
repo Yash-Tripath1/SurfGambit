@@ -1,5 +1,5 @@
 """
-ui/renderer.py — paint a layout tree onto a Tk canvas.
+ui/renderer.py: paint a layout tree onto a Tk canvas.
 
 Draws, in CSS order per box: background, borders, then content (text runs,
 images, form widgets, list markers).

@@ -1,5 +1,5 @@
 """
-surfscript.py — compatibility surface for the legacy scripting API.
+surfscript.py: compatibility surface for the legacy scripting API.
 
 The interpreter now lives in `core.js.surfscript`, wired to the engine's real
 DOM (`core.dom.tree.HTMLNode`) instead of a private copy of it. This module

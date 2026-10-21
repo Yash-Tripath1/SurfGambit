@@ -1,5 +1,5 @@
 """
-core/js/surfscript.py — SurfScript, a real (small) JavaScript engine.
+core/js/surfscript.py: SurfScript, a real (small) JavaScript engine.
 
 This is the language core: lexer, parser, interpreter, values and built-ins.
 The DOM bindings live in `core/js/dom_bridge.py`, so the language can also be
@@ -2007,7 +2007,7 @@ def _number_property(value: float, name: str) -> Any:
 # ============================================================
 
 class DateValue(JSObject):
-    """`new Date()` — a timestamp with the handful of methods pages use."""
+    """`new Date()`: a timestamp with the handful of methods pages use."""
 
     __slots__ = ("ms",)
 

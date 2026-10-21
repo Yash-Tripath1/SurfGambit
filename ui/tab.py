@@ -1,12 +1,12 @@
 """
-ui/tab.py — one browser tab: navigation, document loading, painting.
+ui/tab.py: one browser tab: navigation, document loading, painting.
 
 The concurrency model, which fixes a whole class of legacy bugs:
 
   * every navigation bumps a `generation` counter; any callback whose
     generation is stale is dropped, so a slow response can never overwrite the
     page you have since navigated to
-  * worker threads never touch Tk — they hand closures to `app.ui()`, which
+  * worker threads never touch Tk: they hand closures to `app.ui()`, which
     runs them on the main thread through a queue pump
   * `is_loading` is derived from a counter, so closing a tab mid-load cannot
     leave the toolbar stuck
@@ -614,7 +614,7 @@ class BrowserTab(tk.Frame):
             query = _query_from_search_url(final_url)
             if query:
                 self.app.set_status(
-                    "That engine needs JavaScript \u2014 showing SurfGambit results")
+                    "That engine needs JavaScript. Showing SurfGambit results")
                 self.navigate("surfgambit://search?q="
                               + urllib.parse.quote_plus(query))
                 return
@@ -639,7 +639,7 @@ class BrowserTab(tk.Frame):
             return
         self.set_loading(False)
         self.app.set_status(
-            f"Could not reach that engine ({reason}) \u2014 showing SurfGambit results")
+            f"Could not reach that engine ({reason}). Showing SurfGambit results")
         self.navigate("surfgambit://search?q=" + urllib.parse.quote_plus(query))
 
     def _looks_blocked(self, html_text: str, url: str = "") -> bool:
@@ -653,7 +653,7 @@ class BrowserTab(tk.Frame):
     def _looks_javascript_only(self, html_text: str, url: str = "") -> bool:
         """True for search engines that now answer with a script shell only.
 
-        We do not try to guess for ordinary pages — only for hosts known to be
+        We do not try to guess for ordinary pages, only for hosts known to be
         search engines, where an empty body means "you need JavaScript".
         """
         from core.search import looks_like_search_engine
@@ -949,7 +949,7 @@ class BrowserTab(tk.Frame):
                 self.app.log_console(error, "error")
             if errors:
                 self.app.set_status(
-                    f"{len(errors)} script error(s) — press F12 for details")
+                    f"{len(errors)} script error(s). Press F12 for details")
         except Exception as exc:
             traceback.print_exc()
             self.app.log_console(f"script runtime failure: {exc}", "error")

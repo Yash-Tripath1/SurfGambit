@@ -1,5 +1,5 @@
 """
-ui/mascot.py — the little alien from the welcome page, on the toolbar.
+ui/mascot.py: the little alien from the welcome page, on the toolbar.
 
 The animation reads its state from a callback instead of the settings file:
 legacy re-read settings from disk inside every animation tick (four times a

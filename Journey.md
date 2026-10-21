@@ -1,4 +1,4 @@
-# SurfGambit — The Two Week Journey of Building My Own Browser 🌐
+# SurfGambit: The Two Week Journey of Building My Own Browser 🌐
 
 > *A from-scratch Python browser built by a student who had no idea what he was getting into. This isn't a tutorial. This is just what actually happened.*
 
@@ -14,65 +14,65 @@ The name SurfGambit felt right. It's a gamble. A gambit. You sacrifice something
 
 ---
 
-## Week 1 — "Wait, how does a browser even work?"
+## Week 1: "Wait, how does a browser even work?"
 
-### Day 1-2 — Making the internet talk to me
+### Day 1-2: Making the internet talk to me
 
 The first thing a browser needs to do is actually fetch a webpage. Sounds simple. It's not.
 
 I had to write code that opens a raw internet connection (a TCP socket), wraps it in encryption for HTTPS websites, sends a properly formatted request by hand, and reads back whatever the server sends. No shortcuts. No `requests` library. Just the socket.
 
-The first time it actually returned HTML from a real website felt genuinely unreal. Like — I just talked to Google's servers directly. With code I wrote.
+The first time it actually returned HTML from a real website felt genuinely unreal. Like, I just talked to Google's servers directly. With code I wrote.
 
 Also had to handle stuff like:
 - Pages that redirect you to a different URL before showing content (redirect loops are a thing apparently)
-- Compressed responses — servers send compressed data to save bandwidth and I had to decompress it on the fly
-- Chunked responses — some servers send data in pieces instead of all at once
+- Compressed responses: servers send compressed data to save bandwidth and I had to decompress it on the fly
+- Chunked responses: some servers send data in pieces instead of all at once
 
 Files at the end of this: `network.py`, a basic `browser.py` window, and a `parser.py` that could read HTML tags.
 
-### Day 3-4 — Teaching the browser to read HTML
+### Day 3-4: Teaching the browser to read HTML
 
 HTML is just text. But turning that text into something a browser can actually understand and display is a whole different problem.
 
-I built an HTML parser — basically a program that reads through HTML character by character, figures out what's a tag vs what's actual text, and builds a tree structure out of it. Like how `<b>hello</b>` means "hello is bold" — the parser has to understand that relationship.
+I built an HTML parser, basically a program that reads through HTML character by character, figures out what's a tag vs what's actual text, and builds a tree structure out of it. Like how `<b>hello</b>` means "hello is bold"; the parser has to understand that relationship.
 
 The tricky parts:
 - Tags that never close, like `<br>` or `<img>`
 - Tags that auto-close other tags (a `<p>` closes the previous `<p>` automatically in HTML)
 - Special characters like `&amp;` that need to be decoded into their actual symbols
 
-Then came `layout.py` — teaching the browser where to actually *place* things on screen. Text flows left to right. Elements stack top to bottom. Line wrapping when you hit the edge. Margins and padding. It sounds boring but getting a paragraph to actually wrap correctly took way longer than I expected.
+Then came `layout.py`, teaching the browser where to actually *place* things on screen. Text flows left to right. Elements stack top to bottom. Line wrapping when you hit the edge. Margins and padding. It sounds boring but getting a paragraph to actually wrap correctly took way longer than I expected.
 
-### Day 5-6 — It looks like a real browser now??
+### Day 5-6: It looks like a real browser now??
 
-Added the actual browser chrome — the UI around the webpage:
+Added the actual browser chrome, the UI around the webpage:
 - A proper tab bar (multiple tabs that actually work independently)
 - Address bar you can type in
 - Back and forward buttons with a history stack
 - A reload button
 - A bookmarks button (⭐) that saves pages to a local JSON file
-- `surfgambit://bookmarks` and `surfgambit://history` — internal pages that show your bookmarks and history, rendered by SurfGambit's own engine
+- `surfgambit://bookmarks` and `surfgambit://history`: internal pages that show your bookmarks and history, rendered by SurfGambit's own engine
 
-The mascot showed up around here too — an animated 8-bit alien (👾) in the toolbar that wiggles. Why? Because why not.
+The mascot showed up around here too: an animated 8-bit alien (👾) in the toolbar that wiggles. Why? Because why not.
 
-### Day 7 — First LinkedIn post
+### Day 7: First LinkedIn post
 
 Posted about it. Got 66 views at 2am. Lesson learned: don't post at 2am.
 
 ---
 
-## Week 2 — Actually making it do real things
+## Week 2: Actually making it do real things
 
 ### Cookie support
 
-Cookies are how websites remember you. Log into something, close the tab, come back — the site still knows who you are because of cookies.
+Cookies are how websites remember you. Log into something, close the tab, come back, and the site still knows who you are because of cookies.
 
 I built a cookie manager that intercepts the "Set-Cookie" headers servers send, saves them locally in a `cookies.json` file, and automatically sends them back when you revisit the same site. Sessions persist across restarts now.
 
 ### Images load
 
-Got PNG and GIF images rendering. Had to fetch the image bytes separately (a second network request per image), decode them, and place them in the layout flow with the correct dimensions. JPEGs just show a clean placeholder since the stdlib doesn't handle JPEG natively — deliberate tradeoff, not a bug.
+Got PNG and GIF images rendering. Had to fetch the image bytes separately (a second network request per image), decode them, and place them in the layout flow with the correct dimensions. JPEGs showed a clean placeholder back then, because the standard library has no JPEG decoder. That was a deliberate tradeoff, not a bug; the rewrite below decodes them properly.
 
 The most annoying bug here: Tkinter silently deletes images from memory if you don't keep a reference to them in Python. So images would load, flash on screen for one second, then vanish. Took way too long to figure out why.
 
@@ -80,11 +80,11 @@ The most annoying bug here: Tkinter silently deletes images from memory if you d
 
 You can actually type in search bars and press enter now. This was a big one.
 
-The browser detects `<form>` and `<input>` elements, renders actual text boxes using Tkinter widgets, and when you submit — it grabs all the input values, URL-encodes them, and navigates to the result page. DuckDuckGo searches work properly through SurfGambit's own search bar.
+The browser detects `<form>` and `<input>` elements, renders actual text boxes using Tkinter widgets, and when you submit, it grabs all the input values, URL-encodes them, and navigates to the result page. DuckDuckGo searches work properly through SurfGambit's own search bar.
 
 ### Text selection + copy
 
-Click and drag on any text, right-click, hit Copy. It works. This sounds basic but implementing it on a raw canvas — where there's no built-in text selection concept — meant tracking mouse coordinates, figuring out which rendered words fall inside the drag box, sorting them in reading order, and joining them back into a string for the clipboard.
+Click and drag on any text, right-click, hit Copy. It works. This sounds basic but implementing it on a raw canvas, where there's no built-in text selection concept, meant tracking mouse coordinates, figuring out which rendered words fall inside the drag box, sorting them in reading order, and joining them back into a string for the clipboard.
 
 ### Dark mode with smart contrast
 
@@ -92,7 +92,7 @@ Added a theme toggle. In dark mode, the canvas goes black (#000000). The smart p
 
 ### The Space Invaders thing
 
-When a page fails to load — network error, site down, whatever — instead of showing a boring error message, SurfGambit launches a fully playable Space Invaders arcade game on the canvas.
+When a page fails to load (network error, site down, whatever), instead of showing a boring error message, SurfGambit launches a fully playable Space Invaders arcade game on the canvas.
 
 Arrow keys to move. Space to shoot. Aliens descend. High score screen. ~33 FPS game loop. The aliens animate through the mascot's pixel art frames.
 
@@ -102,11 +102,11 @@ This was absolutely not planned. It just happened.
 
 ### Image search (surfgambit://images)
 
-Typed a keyword, get back a clean gallery of actual photos. Powered by Wikipedia's public image API — no ads, no tracking, no JavaScript. Just results.
+Typed a keyword, get back a clean gallery of actual photos. Powered by Wikipedia's public image API: no ads, no tracking, no JavaScript. Just results.
 
 ### Loading animation
 
-The mascot now goes into "Hyper-Speed Loading Mode" when a page is fetching — wiggling faster and flashing between orange and turquoise until the page loads, then calming back down. Small thing. Makes it feel alive.
+The mascot now goes into "Hyper-Speed Loading Mode" when a page is fetching: wiggling faster and flashing between orange and turquoise until the page loads, then calming back down. Small thing. Makes it feel alive.
 
 ---
 
@@ -133,11 +133,11 @@ The mascot now goes into "Hyper-Speed Loading Mode" when a page is fetching — 
 
 ## What doesn't work (and why that's fine)
 
-- **JavaScript** — intentional non-goal. A JS engine is basically a second browser-sized project on its own.
-- **Modern sites like Google, Twitter, Instagram** — they require JS to even load. DuckDuckGo HTML, Wikipedia, documentation sites, simple HTML pages all work great.
-- **Video** — no native video decoding in Python's stdlib without external libraries.
-- **Complex CSS layouts** — floats, flexbox, grid — partially supported but not perfect.
-- **JPEG images** — stdlib limitation, shows a placeholder instead.
+- **JavaScript**: intentional non-goal. A JS engine is basically a second browser-sized project on its own.
+- **Modern sites like Google, Twitter, Instagram**: they require JS to even load. DuckDuckGo HTML, Wikipedia, documentation sites, simple HTML pages all work great.
+- **Video**: no native video decoding in Python's stdlib without external libraries.
+- **Complex CSS layouts**: flexbox and grid are supported; floats and transforms are not.
+- **JPEG images**: the standard library had no decoder, so these showed a placeholder. The rewrite below added one.
 
 The browser wasn't built to replace Chrome. It was built to understand what Chrome actually does.
 
@@ -150,7 +150,7 @@ Before this project, "a browser fetches webpages" was the extent of my mental mo
 - I know exactly what happens between you typing a URL and pixels appearing on screen
 - I understand why CSS specificity works the way it does because I implemented the cascade myself
 - I understand why JavaScript is a separate, enormous problem
-- I understand why browser compatibility is so hard — every site does slightly wrong HTML and browsers have to handle it gracefully
+- I understand why browser compatibility is so hard; every site does slightly wrong HTML and browsers have to handle it gracefully
 - I understand why Chrome has hundreds of engineers and billions in funding
 
 ---
@@ -161,7 +161,7 @@ The obvious next experiment is the opposite one: build the same browser with
 Electron/WebView, the "easy" way, and write about what changes, what stays the
 same, and what you actually lose when you skip the hard parts.
 
-For now the browser you can run is the one described below — still from
+For now the browser you can run is the one described below: still from
 scratch, still nothing borrowed.
 
 ---
@@ -173,8 +173,8 @@ scratch, still nothing borrowed.
 # The rewrite
 
 Writing a browser that works on simple pages is one thing. Going back through it
-with a critical eye, writing down every defect and fixing them one at a time —
-testing each fix instead of assuming — is the part that actually taught me how
+with a critical eye, writing down every defect and fixing them one at a time
+(testing each fix instead of assuming) is the part that actually taught me how
 the engine works.
 
 ## What was actually broken
@@ -201,12 +201,12 @@ outlived the game.
 
 ## What changed
 
-The engine moved into two packages — `core/` (no Tk imports, fully testable)
+The engine moved into two packages: `core/` (no Tk imports, fully testable)
 and `ui/` (Tk only). The old module names stay on disk as thin compatibility
 shims, so `import parser`, `import layout`, `import network` and friends still
 work exactly as before.
 
-- **HTML**: a real state machine — quoted attributes, comments, implied
+- **HTML**: a real state machine with quoted attributes, comments, implied
   `html/head/body`, RAWTEXT/RCDATA, entity decoding, an iterative builder that
   survives 20,000 levels of nesting.
 - **CSS**: a real tokenizer (strings with braces, nested `@media`/`@supports`,
@@ -215,16 +215,16 @@ work exactly as before.
   actually fetched and cascaded.
 - **Layout**: block (collapsing margins, `auto` centring, anonymous blocks),
   inline (line boxes, baselines, `justify`, `white-space`), inline-block,
-  tables with `colspan`, flexbox, and CSS grid — Wikipedia's Vector skin is a
+  tables with `colspan`, flexbox, and CSS grid. Wikipedia's Vector skin is a
   grid, and now it renders as one.
 - **Network**: GET *and* POST, verified TLS, gzip/deflate, chunked, redirects
   with method rewriting and per-hop cookies.
-- **Cookies**: RFC 6265 — domain match, public-suffix rejection, path
+- **Cookies**: RFC 6265, with domain match, public-suffix rejection, path
   boundaries, `Max-Age=0`.
 - **Security**: PBKDF2-HMAC-SHA256 (600k rounds) for local profiles; stored
   HTTP passwords removed entirely; sanitised download paths; escaped output on
   every internal page.
-- **Scripting**: `core/js` — a JavaScript subset bound to the real DOM, off by
+- **Scripting**: `core/js`, a JavaScript subset bound to the real DOM, off by
   default.
 - **UI**: menus, real shortcuts, per-tab history, find with match count, zoom
   that re-lays-out, text selection, save page, view source, dev tools, and one
@@ -239,7 +239,7 @@ small product details that make a browser feel finished.
 23 626 layout boxes, 41 804 canvas items and a 705 ms paint, and every scroll
 step paid for all of it. The renderer now takes a viewport band and paints only
 what intersects it, the tab keeps 2.5 screens of slack so normal scrolling is
-native Tk scrolling, and leaving the band triggers one culled repaint — about
+native Tk scrolling, and leaving the band triggers one culled repaint: about
 30 ms and 1 600 items. Same page, 23× fewer canvas items. Around that: a real
 thread pool instead of a thread per image, an on-disk HTTP cache with
 `If-None-Match` revalidation, streamed downloads with `Content-Length`

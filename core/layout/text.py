@@ -1,11 +1,11 @@
 """
-core/layout/text.py — font handling and text measurement.
+core/layout/text.py: font handling and text measurement.
 
 Two rules this file exists to enforce:
 
 1. A cached ``tkinter.font.Font`` object is immutable. Decoration (underline /
    overstrike) is part of the cache key, never applied by mutating a shared
-   font — that bug used to underline every link on the page.
+   font; that bug used to underline every link on the page.
 2. Measurement always reports baseline metrics (ascent/descent), so inline
    layout can align text of different sizes on a shared baseline.
 """

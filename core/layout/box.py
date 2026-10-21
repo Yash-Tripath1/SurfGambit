@@ -1,5 +1,5 @@
 """
-core/layout/box.py — layout boxes and the layout tree.
+core/layout/box.py: layout boxes and the layout tree.
 
 A LayoutBox is the geometric counterpart of a DOM node:
 

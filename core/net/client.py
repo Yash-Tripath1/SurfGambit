@@ -1,5 +1,5 @@
 """
-core/net/client.py — the HTTP client.
+core/net/client.py: the HTTP client.
 
 Raw sockets, but done properly:
 

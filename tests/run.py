@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tests/run.py — engine self-checks.
+tests/run.py: engine self-checks.
 
     python -m tests.run            # everything
     python -m tests.run dom css    # only matching groups
@@ -1132,7 +1132,7 @@ def main(argv: List[str]) -> int:
     total = len(selected)
     print()
     print(f"{total - failures}/{total} checks passed"
-          + (f" — {failures} failed" if failures else ""))
+          + (f" ({failures} failed)" if failures else ""))
     return 1 if failures else 0
 
 

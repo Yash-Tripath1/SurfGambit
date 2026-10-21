@@ -1,5 +1,5 @@
 """
-core/dom/tree.py — the DOM node.
+core/dom/tree.py: the DOM node.
 
 A deliberately small node type: tag, attributes, children, parent, text and a
 computed-style dict. Everything else (layout boxes, render items) is derived.

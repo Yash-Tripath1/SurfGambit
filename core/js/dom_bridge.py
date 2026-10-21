@@ -1,5 +1,5 @@
 """
-core/js/dom_bridge.py — the DOM half of SurfScript.
+core/js/dom_bridge.py: the DOM half of SurfScript.
 
 `DocumentRuntime` owns one interpreter per document. It exposes `document`,
 `window`, `Element` and `Event` objects to the language core and keeps the

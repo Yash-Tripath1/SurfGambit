@@ -1,5 +1,5 @@
 """
-core/image/jpeg.py — a JPEG decoder written from scratch.
+core/image/jpeg.py: a JPEG decoder written from scratch.
 
 Tk can only decode PNG and GIF, so before this module every photograph served
 over the web was invisible in SurfGambit. This reads the bitstream itself:
@@ -154,7 +154,7 @@ class _Reader:
                 if nxt == 0x00:
                     pos += 2
                 else:
-                    # Defensive: a marker we did not split out — treat as fill.
+                    # Defensive: a marker we did not split out is treated as fill.
                     pos += 1
                     byte = 0
             else:

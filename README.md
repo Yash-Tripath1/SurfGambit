@@ -23,7 +23,7 @@ character, runs a real CSS cascade, solves layout geometry itself, and paints ev
 through its own rendering pipeline.
 
 It is not fast and it is not Chrome. But every line is written from scratch, it is standard-library
-only, and it renders real websites. The point of the project is to find out — concretely, in code —
+only, and it renders real websites. The point of the project is to find out, concretely and in code,
 what a browser actually does between a TCP socket and a lit pixel.
 
 ---
@@ -71,12 +71,12 @@ implementation, its TLS library, and Tk's drawing primitives.
   widths, and the static position when no offset is given
 - **viewport culling**: only the visible band of a page becomes canvas items, so a 40 000 px document
   scrolls as smoothly as a short one
-- live form controls — text fields, passwords, checkboxes, selects, buttons — that move with the page
+- live form controls (text fields, passwords, checkboxes, selects, buttons) that move with the page
 - an image pipeline that owns its pixels: JPEG (baseline + progressive, scaled IDCT, restart markers),
-  PNG (all colour types, 1–16 bit, Adam7, tRNS), BMP and EXIF orientation; each picture is resampled
+  PNG (all colour types, 1-16 bit, Adam7, tRNS), BMP and EXIF orientation; each picture is resampled
   to the exact size of its CSS box and cached, with a placeholder drawn while it loads
 
-**Scripting — SurfScript**
+**Scripting: SurfScript**
 
 A small JavaScript engine written for this browser: lexer, recursive-descent parser, tree-walking
 interpreter, and a DOM binding onto the engine's own node tree.
@@ -96,7 +96,7 @@ document.getElementById('sum').textContent = 'Total: ' + total;
 - DOM: `querySelector(All)`, `createElement`, `appendChild`, `classList`, `style`, `dataset`,
   attributes, bubbling events, `preventDefault`/`stopPropagation`, inline `onclick`
 - sandboxed: every script runs under a step and wall-clock budget, with no network or filesystem
-  access. It is intentionally a subset — no `class`, `async/await`, modules or `eval`
+  access. It is intentionally a subset: no `class`, `async/await`, modules or `eval`
 
 **Browser**
 
@@ -135,7 +135,7 @@ If Tk is missing: `sudo apt install python3-tk` (Debian/Ubuntu) or
 macOS.
 
 **Windows executable:** download `SurfGambit.exe` from the releases page, or build it yourself with
-`pyinstaller SurfGambit.spec`. Windows Defender may flag it — it is an unsigned PyInstaller binary,
+`pyinstaller SurfGambit.spec`. Windows Defender may flag it; it is an unsigned PyInstaller binary,
 which is a known false positive.
 
 ---
@@ -196,12 +196,12 @@ Deliberately out of scope:
 
 - `float`, transforms, animations, container queries, `position: sticky`
 - WebP/AVIF decoding, audio and video
-- WebSockets and HTTP/2 — the client speaks HTTP/1.1
+- WebSockets and HTTP/2; the client speaks HTTP/1.1
 - a complete JavaScript engine: SurfScript is a documented subset, and sites whose scripts depend on
   the rest of the language render better with scripting switched off. **View → Reload without
   scripts** (`Ctrl+Shift+R`) always gives the plain rendering
 
-If a page looks wrong, that is usually the honest boundary of the engine rather than a crash — the
+If a page looks wrong, that is usually the honest boundary of the engine rather than a crash. The
 browser reports script errors in the developer console instead of failing silently.
 
 ---
@@ -248,7 +248,7 @@ profile. Continuous integration runs it on several Python versions on every push
 | ![Search results](docs/screenshots/search.png) | ![Image search](docs/screenshots/images.png) |
 | A search the engine fetched and rendered itself | Wikimedia thumbnails decoded, resized and laid out here |
 | ![Wikipedia](docs/screenshots/wikipedia.png) | ![SurfScript demo](docs/screenshots/surfscript-demo.png) |
-| Wikipedia: infobox JPEGs decoded and laid out by the engine | `surfgambit://demo` — counters, timers, DOM building |
+| Wikipedia: infobox JPEGs decoded and laid out by the engine | `surfgambit://demo`: counters, timers, DOM building |
 | ![DevTools](docs/screenshots/devtools.png) | ![Settings](docs/screenshots/settings.png) |
 | Console REPL, network panel and cache stats | Settings, including the scripting switch |
 
@@ -256,7 +256,7 @@ profile. Continuous integration runs it on several Python versions on every push
 
 ## Why build this?
 
-To understand how browsers actually work — not at a "it parses HTML" level, but at a "here is exactly
+To understand how browsers actually work, not at a "it parses HTML" level but at a "here is exactly
 how a raw TCP socket turns into pixels on a screen" level.
 
 ---
@@ -271,6 +271,6 @@ how a raw TCP socket turns into pixels on a screen" level.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
 
 *Made by Anadi Tripathi*

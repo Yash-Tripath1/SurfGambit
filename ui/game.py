@@ -1,5 +1,5 @@
 """
-ui/game.py — Alien Defender, the offline easter egg (surfgambit://game).
+ui/game.py: Alien Defender, the offline easter egg (surfgambit://game).
 
 Compared with legacy's game.py:
 

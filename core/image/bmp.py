@@ -1,5 +1,5 @@
 """
-core/image/bmp.py — uncompressed BMP decoding.
+core/image/bmp.py: uncompressed BMP decoding.
 
 BMP is rare on the web but common in screenshots and in documentation sites,
 and it costs very little to support. Handles the 24- and 32-bit BI_RGB forms

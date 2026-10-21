@@ -1,5 +1,5 @@
 """
-core/image/png.py — a PNG decoder in the standard library.
+core/image/png.py: a PNG decoder in the standard library.
 
 Tk can display PNG, so this module is not needed just to *show* a PNG. It
 exists so the browser owns the pixels: a PNG in a CSS box of a different size

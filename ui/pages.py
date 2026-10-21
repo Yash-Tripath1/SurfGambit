@@ -1,5 +1,5 @@
 """
-ui/pages.py — the browser's own pages.
+ui/pages.py: the browser's own pages.
 
 Every value interpolated into these templates goes through ``html.escape``.
 legacy pasted usernames, bookmark titles, history URLs and search queries straight
@@ -358,7 +358,7 @@ def settings_page(settings: Dict[str, str], message: str = "",
             <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">User-Agent Preset (Chrome, Firefox, Safari)</p>
             <input type="text" name="ua" value="{ua_val}"><br>
 
-            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Default Search Engine (Google, DuckDuckGo, Wikipedia, Bing)</p>
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Default Search Engine (Google, DuckDuckGo, Bing, Wikipedia, SurfGambit, Images)</p>
             <input type="text" name="se" value="{se_val}"><br>
 
             <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Mascot Active (on / off)</p>
@@ -454,7 +454,7 @@ def search_page(query: str, results: List[Dict[str, object]], source: str = "",
                         'engine from the dropdown in the toolbar.</p>')
     elif not results:
         results_html = ('<p style="color:#888;">No results came back. The engine may be '
-                        'rate-limiting this connection — try again in a moment, or '
+                        'rate-limiting this connection. Try again in a moment, or '
                         'open the engine directly from the toolbar.</p>')
     else:
         rows = []
@@ -527,7 +527,7 @@ def source_page(title: str, source: str) -> str:
                             f'font-family:monospace; font-size:12px;">{esc(source)}</pre>')
 
 # ---------------------------------------------------------------------------
-# SurfScript demo — the page that proves the engine is wired end to end
+# SurfScript demo: the page that proves the engine is wired end to end
 # ---------------------------------------------------------------------------
 
 def demo_page(js_enabled: bool) -> str:

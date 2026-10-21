@@ -1,5 +1,5 @@
 """
-ui/app.py — the application shell: window, menus, toolbar, tabs, find bar,
+ui/app.py: the application shell: window, menus, toolbar, tabs, find bar,
 downloads, devtools and the thread plumbing.
 
 Threading contract

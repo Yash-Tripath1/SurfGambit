@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SurfGambit — a browser built from scratch in Python.
+SurfGambit: a browser built from scratch in Python.
 
 Entry point. The engine lives in `core/` (DOM, CSS, layout, network, storage)
 and the user interface in `ui/` (application shell, renderer, internal pages,

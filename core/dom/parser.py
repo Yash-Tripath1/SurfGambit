@@ -1,5 +1,5 @@
 """
-core/dom/parser.py — HTML tree construction.
+core/dom/parser.py: HTML tree construction.
 
 Turns tokens into a DOM with the tree-shaping rules that matter for layout:
 

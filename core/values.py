@@ -1,5 +1,5 @@
 """
-core/values.py — CSS value parsing.
+core/values.py: CSS value parsing.
 
 Everything a stylesheet can say, converted into things layout can use:
 

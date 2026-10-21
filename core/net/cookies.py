@@ -1,5 +1,5 @@
 """
-core/net/cookies.py — RFC 6265 cookie jar.
+core/net/cookies.py: RFC 6265 cookie jar.
 
 The previous jar trusted whatever `Domain=` a server sent, which lets any site
 plant cookies for any other site. This one enforces:
