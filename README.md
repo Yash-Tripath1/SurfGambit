@@ -134,9 +134,18 @@ If Tk is missing: `sudo apt install python3-tk` (Debian/Ubuntu) or
 `sudo dnf install python3-tkinter` (Fedora). It ships with the python.org installers on Windows and
 macOS.
 
-**Windows executable:** download `SurfGambit.exe` from the releases page, or build it yourself with
-`pyinstaller SurfGambit.spec`. Windows Defender may flag it; it is an unsigned PyInstaller binary,
-which is a known false positive.
+**Windows executable:** download `SurfGambit.exe` from the releases page. To build it yourself, on
+Windows with Python 3.12:
+
+```bash
+pip install pyinstaller
+pyinstaller SurfGambit.spec --noconfirm --clean
+```
+
+The build lands in `dist/SurfGambit.exe`. PyInstaller cannot cross-compile, so the Windows binary
+has to be produced on Windows; `.github/workflows/release.yml` does exactly that on every version
+tag, so a release never ships a stale executable. Windows Defender may flag the result; it is an
+unsigned PyInstaller binary, which is a known false positive.
 
 ---
 
@@ -168,7 +177,7 @@ SurfGambit/
 │   css_compiler.py surfscript.py game.py      # compatibility shims
 ├── docs/                   # architecture notes and screenshots
 ├── tests/                  # self-checks (python -m tests.run)
-└── .github/workflows/      # continuous integration
+└── .github/workflows/      # self-checks on every push, Windows build on every tag
 ```
 
 Browser data lives outside the repository:

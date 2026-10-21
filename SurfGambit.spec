@@ -7,6 +7,11 @@ PyInstaller build recipe.
 `browser.py` imports `core.*` and `ui.*` lazily (tkinter is imported inside
 `main()`), so both packages are listed as hidden imports: without them the
 frozen build starts and then fails on the first navigation.
+
+`core/image` matters just as much: it is only reached when a page carries a
+picture, so a build missing it looks healthy until the first image load.
+
+    pyinstaller SurfGambit.spec          # -> dist/SurfGambit(.exe)
 """
 
 core_modules = [
@@ -16,6 +21,7 @@ core_modules = [
     "core.style", "core.style.css", "core.style.selectors", "core.style.cascade",
     "core.layout", "core.layout.box", "core.layout.block", "core.layout.inline",
     "core.layout.text", "core.layout.table", "core.layout.flex", "core.layout.grid",
+    "core.image", "core.image.jpeg", "core.image.png", "core.image.bmp",
     "core.net", "core.net.client", "core.net.cookies", "core.net.cache",
     "core.js", "core.js.surfscript", "core.js.dom_bridge",
 ]

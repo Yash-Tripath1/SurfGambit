@@ -1,0 +1,97 @@
+name: release
+
+# Builds the Windows executable when a version tag is pushed, and attaches it
+# (plus the source drop-in archive) to the GitHub release for that tag.
+#
+#   git tag -a v2.0.0 -m "SurfGambit v2.0.0"
+#   git push origin v2.0.0
+#
+# `workflow_dispatch` builds the same artifact without publishing, which is
+# useful for checking a change before it goes out.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Engine self-checks
+        run: python -m tests.run --verbose
+
+      - name: Build SurfGambit.exe
+        run: pyinstaller SurfGambit.spec --noconfirm --clean
+
+      - name: Verify the executable starts
+        shell: pwsh
+        run: |
+          # A windowed build cannot be clicked in CI, so this checks the two
+          # things that actually break in a frozen bundle: the entry point
+          # importing, and the engine packages being present.
+          python -c "import browser, core.image.png, core.image.jpeg, core.search, ui.app; print('imports ok')"
+          if (-not (Test-Path dist/SurfGambit.exe)) { throw "dist/SurfGambit.exe was not produced" }
+          $size = (Get-Item dist/SurfGambit.exe).Length
+          Write-Host "SurfGambit.exe: $([math]::Round($size/1MB, 1)) MB"
+          if ($size -lt 3MB) { throw "executable is suspiciously small ($size bytes)" }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SurfGambit-windows
+          path: dist/SurfGambit.exe
+          if-no-files-found: error
+
+      - name: Package the source drop-in
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          # Everything the browser needs, laid out at the repository root so it
+          # can be unzipped straight over an existing clone.
+          $items = @(
+            "browser.py", "parser.py", "layout.py", "network.py", "cookies.py",
+            "accounts.py", "css_compiler.py", "surfscript.py", "game.py",
+            "SurfGambit.spec", "README.md", "LICENSE", "Journey.md",
+            "core", "ui", "tests", "docs", ".github", ".gitignore"
+          )
+          $stage = "build/dropin"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          foreach ($item in $items) {
+            if (Test-Path $item) { Copy-Item -Path $item -Destination $stage -Recurse -Force }
+          }
+          Get-ChildItem -Path $stage -Recurse -Directory -Filter "__pycache__" -Force |
+            Remove-Item -Recurse -Force
+          # .NET's zipper keeps dotfiles (.github, .gitignore), which
+          # Compress-Archive silently drops on Windows PowerShell.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Join-Path (Get-Location) "build/SurfGambit-dropin.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            (Resolve-Path $stage).Path, $zip, "Optimal", $false)
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Create the release if it does not exist yet, then attach the files.
+          $exists = gh release view $env:TAG --json tagName 2>$null
+          if (-not $exists) {
+            gh release create $env:TAG --title "SurfGambit $env:TAG" --generate-notes
+          }
+          gh release upload $env:TAG "dist/SurfGambit.exe" "build/SurfGambit-dropin.zip" --clobber
