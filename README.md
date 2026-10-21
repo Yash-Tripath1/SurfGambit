@@ -65,10 +65,16 @@ implementation, its TLS library, and Tk's drawing primitives.
 **Layout and painting**
 
 - block flow with collapsing margins, `auto` centring and `max-width`; inline flow with line boxes,
-  baselines, justification and `white-space`; inline-block; tables with `colspan`; flexbox; CSS grid
+  baselines, justification and `white-space`; inline-block (including block children inside it);
+  tables with `colspan`; flexbox with wrapping and item blockification; CSS grid
+- absolute and fixed positioning: out-of-flow boxes, `top`/`right`/`bottom`/`left`, shrink-to-fit
+  widths, and the static position when no offset is given
 - **viewport culling**: only the visible band of a page becomes canvas items, so a 40 000 px document
   scrolls as smoothly as a short one
 - live form controls — text fields, passwords, checkboxes, selects, buttons — that move with the page
+- an image pipeline that owns its pixels: JPEG (baseline + progressive, scaled IDCT, restart markers),
+  PNG (all colour types, 1–16 bit, Adam7, tRNS), BMP and EXIF orientation; each picture is resampled
+  to the exact size of its CSS box and cached, with a placeholder drawn while it loads
 
 **Scripting — SurfScript**
 
@@ -143,13 +149,14 @@ SurfGambit/
 │   ├── dom/                # tokenizer, tree builder, DOM node
 │   ├── style/              # CSS tokenizer, selector engine, cascade
 │   ├── layout/             # box tree, block, inline, table, flex, grid
+│   ├── image/              # JPEG, PNG and BMP decoders, resampling, PNG writer
 │   ├── net/                # HTTPClient, HTTPCache, RFC 6265 CookieJar
 │   ├── js/                 # SurfScript interpreter + DOM bridge
 │   ├── accounts.py         # local profiles (PBKDF2)
 │   ├── storage.py          # per-user data directory, atomic writes
 │   ├── store.py            # settings, bookmarks, history, downloads
 │   ├── downloads.py        # download queue
-│   └── search.py           # address-bar parsing + image search
+│   └── search.py           # address-bar parsing, results and image search
 ├── ui/                     # Tk layer
 │   ├── app.py              # window, menus, tabs, devtools, thread pool
 │   ├── tab.py              # navigation, loading, painting, script events
@@ -181,14 +188,14 @@ Set `SURFGAMBIT_DATA_DIR` to override it.
 Works reasonably well:
 
 - text-first sites (Hacker News, text.npr.org, example.com)
-- Wikipedia, including the Vector skin's grid layout
+- Wikipedia, including the Vector skin's grid layout and its infobox images
 - documentation sites and blogs with classic CSS
 - GitHub's marketing pages
 
 Deliberately out of scope:
 
-- `position: absolute/fixed`, `float`, transforms, animations, container queries
-- WebP/AVIF decoding (Tk only decodes PNG, GIF, PPM and PGM), audio and video
+- `float`, transforms, animations, container queries, `position: sticky`
+- WebP/AVIF decoding, audio and video
 - WebSockets and HTTP/2 — the client speaks HTTP/1.1
 - a complete JavaScript engine: SurfScript is a documented subset, and sites whose scripts depend on
   the rest of the language render better with scripting switched off. **View → Reload without
@@ -238,8 +245,10 @@ profile. Continuous integration runs it on several Python versions on every push
 
 | | |
 | --- | --- |
+| ![Search results](docs/screenshots/search.png) | ![Image search](docs/screenshots/images.png) |
+| A search the engine fetched and rendered itself | Wikimedia thumbnails decoded, resized and laid out here |
 | ![Wikipedia](docs/screenshots/wikipedia.png) | ![SurfScript demo](docs/screenshots/surfscript-demo.png) |
-| Wikipedia's Vector layout, culled to the visible band | `surfgambit://demo` — counters, timers, DOM building |
+| Wikipedia: infobox JPEGs decoded and laid out by the engine | `surfgambit://demo` — counters, timers, DOM building |
 | ![DevTools](docs/screenshots/devtools.png) | ![Settings](docs/screenshots/settings.png) |
 | Console REPL, network panel and cache stats | Settings, including the scripting switch |
 

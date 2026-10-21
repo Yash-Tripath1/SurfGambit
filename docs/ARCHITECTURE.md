@@ -13,12 +13,13 @@ browser.py                entry point (creates the app)
 │   ├── dom/              tokenizer.py  tree.py  entities.py  parser.py
 │   ├── style/            css.py  selectors.py  cascade.py  values.py
 │   ├── layout/           box.py  block.py  inline.py  table.py  flex.py  grid.py  text.py
+│   ├── image/            __init__.py (pipeline)  jpeg.py  png.py  bmp.py
 │   ├── js/               surfscript.py (language)  dom_bridge.py (DOM + events)
 │   ├── store.py          settings / bookmarks / history / downloads
 │   ├── storage.py        atomic JSON, per-OS data directory
 │   ├── downloads.py      queue, streaming, cancellation
 │   ├── accounts.py       PBKDF2 credentials
-│   └── search.py         address-bar search, user agents
+│   └── search.py         address-bar parsing, Bing/Wikipedia results, image search
 │
 ├── ui/                   everything that touches Tk
 │   ├── app.py            window, menus, toolbar, threading, devtools
@@ -95,6 +96,42 @@ comes from disk. `force_refresh=True` (Reload) bypasses the lookup entirely.
 Every request is appended to `client.log` as a `RequestRecord`
 (method, URL, status, ms, bytes, cached), which is what the devtools **Network**
 tab renders.
+
+## Images
+
+`core/image` turns fetched bytes into something the canvas can draw, and it
+owns the pixels rather than handing them to Tk:
+
+| format | decoder | notes |
+| --- | --- | --- |
+| JPEG | `jpeg.py` | baseline + progressive, restart markers, CMYK, 1/2/4/8 scaled IDCT |
+| PNG  | `png.py` | colour types 0/2/3/4/6, 1–16 bit, tRNS, Adam7, every filter |
+| BMP  | `bmp.py` | uncompressed 24/32-bit, top-down and bottom-up |
+| GIF  | Tk | passed through untouched |
+
+`decode_for_display(data, max_dim)` sniffs the magic bytes (never the URL),
+applies EXIF orientation, caps the pixel size, and returns an `ImageInfo` with
+PNG bytes for `PhotoImage` plus the packed RGB(A) buffer. The tab fetches and
+decodes on a worker thread, stores the result under the absolute URL, and the
+renderer asks `get_image_for(url, w, h)` for a photo of exactly the CSS box —
+`resize_rgb()` + `png_from_rgb()` do the scaling, so an image never spills into
+its neighbours or leaves a letterbox gap. Both caches are LRU-bounded.
+
+Accuracy against Pillow on the reference corpus: mean absolute error 0.02
+(grey), 0.40 (4:4:4), 0.55 (photo), 5.70 (4:2:0, chroma smoothing) — i.e. the
+same picture to the eye. A 1280×800 photo decodes in 0.6 s at half scale.
+
+## Search
+
+The address bar does not load a search engine's page unless it can be read.
+`core/search.py` fetches Bing's results HTML and extracts `b_algo` blocks
+(unwrapping `/ck/a` redirects, stripping breadcrumb decorations), topping the
+list up from the Wikipedia API when Bing returns too few. Google, DuckDuckGo,
+Startpage and others answer plain HTTP clients with JavaScript shells or
+captchas; `page_looks_blocked()` and the link-count check in `ui/tab.py`
+recognise both and reroute to `surfgambit://search?q=…`, which renders results
+with the engine itself. `surfgambit://images?q=…` does the same for Wikimedia
+Commons thumbnails in a responsive card grid.
 
 ## Painting and culling (Phase 2)
 

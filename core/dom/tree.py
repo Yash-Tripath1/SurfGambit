@@ -204,6 +204,32 @@ def text_content(root: HTMLNode) -> str:
     return root.text_content()
 
 
+# Elements whose text is never shown to the reader.
+_HIDDEN_TEXT_TAGS = frozenset({
+    "script", "style", "noscript", "template", "head", "title", "meta",
+    "link", "svg", "canvas",
+})
+
+
+def visible_text(root: HTMLNode) -> str:
+    """Text a reader would actually see.
+
+    `text_content()` includes inline `<script>` source, which makes a blank
+    JavaScript-only page look like it has 18 KB of content.
+    """
+    out: List[str] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.tag == TEXT_TAG:
+            out.append(node.text)
+            continue
+        if node.tag in _HIDDEN_TEXT_TAGS:
+            continue
+        stack.extend(reversed(node.children))
+    return "".join(out)
+
+
 def clone_shallow(node: HTMLNode) -> HTMLNode:
     copy = HTMLNode(node.tag, dict(node.attributes), None, node.text)
     copy.style = dict(node.style)

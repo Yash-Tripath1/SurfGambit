@@ -59,14 +59,17 @@ def find_link(node: Optional[HTMLNode]) -> str:
 class Renderer:
     def __init__(self, canvas: tk.Canvas, measurer: TextMeasurer,
                  image_provider: Optional[Callable[[str], Optional[tk.PhotoImage]]] = None,
-                 base_url: str = "") -> None:
+                 base_url: str = "",
+                 sized_image_provider: Optional[Callable[[str, int, int],
+                                                        Optional[tk.PhotoImage]]] = None) -> None:
         self.canvas = canvas
         self.measurer = measurer
         self.image_provider = image_provider
+        self.sized_image_provider = sized_image_provider
         self.base_url = base_url
         self.link_map: Dict[int, str] = {}
         self._next_link_id = 1
-        self._scaled_images: Dict[Tuple[str, int], tk.PhotoImage] = {}
+        self._scaled_images: Dict[Tuple, tk.PhotoImage] = {}
         self.search_term = ""
         self.search_hits = 0
         self._default_fg = "#000000"
@@ -97,6 +100,9 @@ class Renderer:
         self._viewport = viewport
         self.drawn_boxes = 0
         self.drawn_items = 0
+        # An image nested inside inline-block containers is reachable from
+        # several line-item lists; draw each one exactly once per pass.
+        self._painted = set()
 
         if self.search_term:
             self.search_hits = _count_search_hits(root, self.search_term)
@@ -258,6 +264,12 @@ class Renderer:
     # -- inline items -----------------------------------------------------
     def _draw_item(self, item: InlineItem) -> None:
         kind = item.kind
+        if item.node is not None and kind in ("image", "widget"):
+            key = (kind, id(item.node), round(item.x), round(item.y),
+                   round(item.width), round(item.height))
+            if key in self._painted:
+                return
+            self._painted.add(key)
         if kind == "word":
             self._draw_word(item)
         elif kind == "image":
@@ -268,6 +280,10 @@ class Renderer:
             payload = item.extra
             if payload:
                 box = payload[0]
+                key = ("block", id(box), round(item.x), round(item.y))
+                if key in self._painted:
+                    return
+                self._painted.add(key)
                 # The sub-box was laid out at (0,0); shift into place.
                 self._offset_box(box, item.x + payload[1], item.y + payload[2])
                 self._draw(box)
@@ -329,17 +345,30 @@ class Renderer:
     def _paint_image(self, item: InlineItem) -> None:
         url = (item.node.attributes.get("src") if item.node else "") or ""
         photo = None
+        abs_url = _absolute(url, self.base_url) if url else ""
         if self.image_provider and url:
-            abs_url = _absolute(url, self.base_url)
             photo = self.image_provider(abs_url)
 
         w, h = item.width, item.height
+        sized_ok = False
+        if photo is not None and getattr(self, "sized_image_provider", None) and url:
+            # Exact-size photo for this box (the tab resamples from the
+            # decoded pixels), so nothing is squashed or letterboxed.
+            sized = self.sized_image_provider(abs_url, int(w), int(h))
+            if (sized is not None and sized.width() <= w + 1
+                    and sized.height() <= h + 1):
+                photo = sized
+                sized_ok = True
         if item.node is not None:
             self.node_map[id(item.node)] = item.node
         if photo is not None:
-            scaled = self._fit_image(photo, abs_url, w, h)
+            scaled = photo if sized_ok else self._fit_image(photo, abs_url, w, h)
             if scaled is not None:
-                self.canvas.create_image(item.x, item.y, image=scaled, anchor="nw")
+                # Centre a smaller-than-box image instead of pinning it to the
+                # top-left corner of the slot.
+                ox = item.x + max(0.0, (w - scaled.width()) / 2.0)
+                oy = item.y + max(0.0, (h - scaled.height()) / 2.0)
+                self.canvas.create_image(ox, oy, image=scaled, anchor="nw")
                 return
         # Placeholder while loading / on failure.
         alt = (item.node.attributes.get("alt") if item.node else "") or ""
@@ -357,38 +386,109 @@ class Renderer:
 
     def _fit_image(self, photo: tk.PhotoImage, url: str,
                    target_w: float, target_h: float) -> Optional[tk.PhotoImage]:
+        """Scale `photo` to fit the CSS box exactly.
+
+        Tk itself can only scale by whole factors (zoom/subsample), which turns
+        a 640-px photo in a 420-px slot into 320 px and leaves a gap. Whole
+        factors are still used when they are close enough (they are far
+        cheaper); otherwise the image is resampled pixel-exactly.
+        """
         natural_w = photo.width()
         natural_h = photo.height()
         if natural_w <= 0 or natural_h <= 0:
             return photo
-
         if target_w <= 0 or target_h <= 0:
             return photo
 
         ratio = min(target_w / natural_w, target_h / natural_h)
-        # Image already the right size: draw as-is.
-        if abs(ratio - 1.0) < 0.02:
-            return photo
-
-        key = (url, int(target_w))
+        out_w = max(1, int(round(natural_w * ratio)))
+        out_h = max(1, int(round(natural_h * ratio)))
+        key = (url, out_w, out_h)
         cached = self._scaled_images.get(key)
         if cached is not None:
             return cached
 
-        try:
-            if ratio < 1.0:
-                factor = max(1, int(round(1 / ratio)))
-                scaled = photo.subsample(factor, factor)
-            else:
-                factor = max(1, int(round(ratio)))
-                scaled = photo.zoom(factor, factor)
-        except Exception:
-            scaled = photo
+        scaled = None
+        # Cheap exact-enough path: whole-factor zoom/subsample.
+        if ratio < 1.0:
+            factor = int(round(1.0 / ratio))
+            if factor >= 1 and abs(natural_w / factor - out_w) <= 1 \
+                    and abs(natural_h / factor - out_h) <= 1:
+                try:
+                    scaled = photo.subsample(factor, factor)
+                except Exception:
+                    scaled = None
+        else:
+            factor = int(round(ratio))
+            if factor >= 1 and abs(natural_w * factor - out_w) <= 1 \
+                    and abs(natural_h * factor - out_h) <= 1:
+                try:
+                    scaled = photo.zoom(factor, factor)
+                except Exception:
+                    scaled = None
 
-        if len(self._scaled_images) > 200:
+        if scaled is None:
+            scaled = self._resample(photo, out_w, out_h)
+        if scaled is None:
+            # Last resort: whole-factor shrink that is guaranteed not to spill
+            # outside the CSS box. An image too big for its slot would paint
+            # over neighbouring cards, which is worse than a small gap.
+            factor = max(1, int(math.ceil(max(natural_w / max(1.0, target_w),
+                                             natural_h / max(1.0, target_h)))))
+            try:
+                scaled = photo.subsample(factor, factor)
+            except Exception:
+                scaled = None
+        if scaled is not None and (scaled.width() > target_w + 1
+                                   or scaled.height() > target_h + 1):
+            scaled = None
+        if scaled is None:
+            return None
+
+        if len(self._scaled_images) > 120:
             self._scaled_images.clear()
         self._scaled_images[key] = scaled
         return scaled
+
+    def _resample(self, photo: tk.PhotoImage, out_w: int, out_h: int
+                  ) -> Optional[tk.PhotoImage]:
+        """Nearest-neighbour resample in pure Python, in bulk Tcl calls."""
+        natural_w = photo.width()
+        natural_h = photo.height()
+        if natural_w <= 0 or natural_h <= 0 or out_w <= 0 or out_h <= 0:
+            return None
+        try:
+            flat = self.canvas.tk.call(photo.name, "get", "-to", 0, 0,
+                                       natural_w - 1, natural_h - 1)
+        except Exception:
+            return None
+        if not flat:
+            return None
+        try:
+            pixels = [int(v) for v in flat]
+        except (TypeError, ValueError):
+            return None
+        if len(pixels) < natural_w * natural_h * 3:
+            return None
+
+        xmap = [min(natural_w - 1, int(x * natural_w / out_w)) for x in range(out_w)]
+        rows = []
+        for y in range(out_h):
+            sy = min(natural_h - 1, int(y * natural_h / out_h))
+            base = sy * natural_w * 3
+            row = []
+            for sx in xmap:
+                off = base + sx * 3
+                row.append("%d %d %d" % (pixels[off], pixels[off + 1],
+                                         pixels[off + 2]))
+            rows.append(" ".join(row))
+        try:
+            out = tk.PhotoImage(width=out_w, height=out_h)
+            for y, row in enumerate(rows):
+                out.put(row, to=(0, y, out_w - 1, y))
+            return out
+        except Exception:
+            return None
 
     def _draw_widget(self, item: InlineItem) -> None:
         node = item.node

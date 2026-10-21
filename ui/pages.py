@@ -207,9 +207,9 @@ def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]]) -> str
     </div>
 
     <div class="card">
-        <h2>\U0001F5BC PNG/GIF Image Support</h2>
-        <p>This browser pulls actual image resources directly through raw socket streams, decodes them via standard library PhotoImage on the main loop, and reflows layouts on image dimensions detection.</p>
-        <p>Try loading any standard image-heavy page. JPEGs fallback gracefully to text-based alt placeholders.</p>
+        <h2>\U0001F5BC Real Image Decoding</h2>
+        <p>Images are fetched through the same raw socket client as the page and decoded here: JPEG (baseline and progressive), PNG (every colour type and bit depth) and BMP, with EXIF rotation applied. GIF goes straight to Tk.</p>
+        <p>Each picture is resampled to the exact size its CSS box asks for, so nothing is squashed, stretched or left with a gap. Pick <b>Images</b> in the search box to see it.</p>
     </div>
 
     <div class="card">
@@ -445,20 +445,80 @@ def error_page(url: str, message: str, suggestions: bool = True) -> str:
     return _document("Load error", body)
 
 
-def image_search_page(query: str, image_urls: List[str], error: str = "") -> str:
+def search_page(query: str, results: List[Dict[str, object]], source: str = "",
+                error: str = "") -> str:
+    """The browser's own results page, in the same palette as the start page."""
     if error:
-        content = f'<p class="danger">{esc(error)}</p>'
-    elif not image_urls:
-        content = '<p class="muted">No images found for that query.</p>'
+        results_html = (f'<p style="color:#ff5722;font-weight:bold;">{esc(error)}</p>'
+                        '<p style="color:#888;">Check the spelling, or try a different '
+                        'engine from the dropdown in the toolbar.</p>')
+    elif not results:
+        results_html = ('<p style="color:#888;">No results came back. The engine may be '
+                        'rate-limiting this connection — try again in a moment, or '
+                        'open the engine directly from the toolbar.</p>')
     else:
-        content = "".join(
-            f'<img src="{esc(url, quote=True)}" alt="{esc(query)}" '
-            f'style="width:180px; height:150px; margin:8px; border:1px solid #242424;">'
-            for url in image_urls
-        )
+        rows = []
+        for item in results:
+            title = esc(str(item.get("title") or ""))
+            url = str(item.get("url") or "")
+            snippet = esc(str(item.get("snippet") or ""))
+            host = esc(urllib.parse.urlsplit(url).hostname or url)
+            rows.append(
+                f'<div style="border-bottom:1px solid #1e1e1e; padding:14px 0;">'
+                f'<a href="{esc(url, quote=True)}" style="font-size:17px; '
+                f'text-decoration:none; color:#4dd8e0; font-weight:bold;">{title}</a>'
+                f'<div style="color:#4caf50; font-size:12px; margin:3px 0 6px;">{host}</div>'
+                f'<div style="color:#c8c8c8; font-size:14px; line-height:1.55;">{snippet}</div>'
+                f'</div>')
+        results_html = "".join(rows)
+
+    source_line = (f'<p style="color:#666; font-size:12px; margin-top:18px;">'
+                   f'Results from {esc(source)}</p>') if source else ""
+
     body = f"""
-    <h1>Images: {esc(query)}</h1>{_nav()}
-    <div class="card" style="max-width:760px; text-align:center;">{content}</div>"""
+    <h1 style="text-align:left; margin:0 0 4px;">{esc(query)}</h1>
+    <p style="color:#777; font-size:13px; margin:0 0 18px;">
+        Site: <a href="surfgambit://search?q={esc(urllib.parse.quote(query), quote=True)}">surfgambit://search</a>
+    </p>
+    <div style="max-width:760px;">
+        {results_html}
+        {source_line}
+    </div>"""
+    return _document(f"{query} - SurfGambit search", body)
+
+
+def image_search_page(query: str, images: List[Dict[str, object]],
+                      error: str = "") -> str:
+    if error:
+        content = f'<p style="color:#ff5722;font-weight:bold;">{esc(error)}</p>'
+    elif not images:
+        content = '<p style="color:#888;">No pictures came back for that query.</p>'
+    else:
+        # A wrapping flex row: the engine's flexbox does this properly, while
+        # inline-block cards overlap once they carry padding and labels.
+        cells = []
+        for item in images:
+            thumb = str(item.get("thumb") or "")
+            page = str(item.get("page") or thumb)
+            title = esc(str(item.get("title") or query))
+            cells.append(
+                f'<a href="{esc(page, quote=True)}" title="{title}" '
+                f'style="display:block; width:196px; height:196px; margin:6px; '
+                f'text-decoration:none;">'
+                f'<div style="background-color:#0d0d0d; border:1px solid #222; '
+                f'border-radius:8px; padding:8px; text-align:center; height:178px;">'
+                f'<img src="{esc(thumb, quote=True)}" alt="{title}" '
+                f'style="width:178px; height:132px;">'
+                f'<div style="color:#9aa; font-size:11px; margin-top:6px;">'
+                f'{esc(_ellipsis(str(item.get("title") or ""), 25))}</div>'
+                f'</div></a>')
+        content = ('<div style="display:flex; flex-wrap:wrap; '
+                   'width:940px;">' + "".join(cells) + "</div>")
+
+    body = f"""
+    <h1 style="text-align:left;">Images: {esc(query)}</h1>
+    <p style="color:#777; font-size:13px;">Pictures from Wikimedia Commons.</p>
+    <div style="max-width:980px; text-align:left;">{content}</div>"""
     return _document(f"Images: {query}", body)
 
 

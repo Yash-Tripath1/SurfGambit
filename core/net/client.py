@@ -16,6 +16,7 @@ Raw sockets, but done properly:
 
 from __future__ import annotations
 
+import email.utils
 import gzip
 import io
 import os
@@ -225,8 +226,49 @@ class HTTPClient:
     # -- public API -------------------------------------------------------
     def get(self, url: str, headers: Optional[Dict[str, str]] = None,
             referer: str = "", force_refresh: bool = False) -> Response:
+        if url.startswith("file://"):
+            return self._read_file(url)
         return self.request("GET", url, headers=headers, referer=referer,
                             force_refresh=force_refresh)
+
+    # -- local files -------------------------------------------------------
+    _MIME = {
+        ".html": "text/html", ".htm": "text/html", ".css": "text/css",
+        ".js": "text/javascript", ".json": "application/json",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".bmp": "image/bmp", ".svg": "image/svg+xml",
+        ".txt": "text/plain", ".md": "text/plain",
+    }
+
+    def _read_file(self, url: str) -> Response:
+        """Serve a `file://` URL from disk with the same Response shape."""
+        import mimetypes
+        import os
+        import time
+        parts = urllib.parse.urlsplit(url)
+        path = urllib.parse.unquote(parts.path)
+        if os.name == "nt" and path.startswith("/") and len(path) > 2 and path[2] == ":":
+            path = path[1:]
+        started = time.time()
+        try:
+            with open(path, "rb") as handle:
+                body = handle.read()
+            stat = os.stat(path)
+        except OSError as exc:
+            self.record(RequestRecord("GET", url, 404, time.time() - started, 0,
+                                      error=str(exc)))
+            return Response(404, "Not Found", {}, [], b"", url,
+                            elapsed=time.time() - started)
+        ext = os.path.splitext(path)[1].lower()
+        content_type = self._MIME.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"
+        headers = {
+            "content-type": f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
+            "content-length": str(len(body)),
+            "last-modified": email.utils.formatdate(stat.st_mtime, usegmt=True),
+        }
+        self.record(RequestRecord("GET", url, 200, time.time() - started, len(body)))
+        return Response(200, "OK", headers, list(headers.items()), body, url,
+                        elapsed=time.time() - started)
 
     def post(self, url: str, data=None, headers: Optional[Dict[str, str]] = None,
              referer: str = "") -> Response:
@@ -365,8 +407,10 @@ class HTTPClient:
         request_headers: Dict[str, str] = {
             "Host": host_header,
             "User-Agent": self.user_agent,
+            # No WebP/AVIF: this browser cannot decode them, so do not invite
+            # servers to send them instead of a JPEG we can render.
             "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
-                       "image/avif,image/webp,image/png,image/gif,*/*;q=0.8"),
+                       "image/png,image/jpeg,image/gif,image/bmp,*/*;q=0.8"),
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate",
             "Connection": "close",

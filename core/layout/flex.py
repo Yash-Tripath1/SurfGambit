@@ -162,6 +162,14 @@ def layout_flex(box: LayoutBox, measurer, available_width: float) -> float:
     for child in box.children:
         if child.display == "none":
             continue
+        if str(child.style.get("position") or "static").lower() in ("absolute", "fixed"):
+            continue
+        # Flex items are blockified (CSS Flexbox §4): an inline-level child of
+        # a flex container becomes a block-level box, so both layout and paint
+        # treat it like a normal block child.
+        blockified = _blockify(child.display)
+        if blockified != child.display:
+            child.display = blockified
         if child.display == "text" and not (child.text or "").strip():
             continue
         read_box_model(child, main_available)
@@ -344,6 +352,21 @@ def _content_width(box: LayoutBox, measurer, available: float) -> float:
 
 def _content_height_estimate(box: LayoutBox, measurer, available: float) -> float:
     return 24.0
+
+
+_BLOCKIFY = {
+    "inline": "block", "inline-block": "block", "inline-table": "table",
+    "inline-flex": "flex", "inline-grid": "grid", "table-row": "block",
+    "table-row-group": "block", "table-header-group": "block",
+    "table-footer-group": "block", "table-cell": "block",
+    "table-column": "block", "table-column-group": "block",
+    "table-caption": "block", "list-item": "list-item",
+}
+
+
+def _blockify(display: str) -> str:
+    """Return the block-level counterpart of an inline-level display value."""
+    return _BLOCKIFY.get(display, display)
 
 
 def _measure_item_height(box: LayoutBox, measurer, width: float,

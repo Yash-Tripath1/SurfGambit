@@ -226,17 +226,24 @@ def _replaced_size(box: LayoutBox, measurer: TextMeasurer,
     height = resolve_length(style.get("height"), available)
 
     if tag == "img":
+        # Intrinsic size: what the decoder measured beats a width/height
+        # attribute, which is only the author's preferred display size.
         nat_w = box.replaced_width or _num(attrs.get("width"))
         nat_h = box.replaced_height or _num(attrs.get("height"))
-        if width is None:
+        if width is None and height is None:
             width = nat_w or DEFAULT_IMAGE_W
-        if height is None:
             height = nat_h or DEFAULT_IMAGE_H
-        if nat_w and nat_h:
-            if style.get("width") is not None and style.get("height") is None:
+        elif width is not None and height is None:
+            # One dimension given: keep the picture's aspect ratio.
+            if nat_w and nat_h:
                 height = width * nat_h / nat_w
-            elif style.get("height") is not None and style.get("width") is None:
+            else:
+                height = nat_h or DEFAULT_IMAGE_H
+        elif height is not None and width is None:
+            if nat_w and nat_h:
                 width = height * nat_w / nat_h
+            else:
+                width = nat_w or DEFAULT_IMAGE_W
         return max(0.0, width), max(0.0, height)
 
     if tag == "input":

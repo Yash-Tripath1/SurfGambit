@@ -91,6 +91,169 @@ def find_box(box, tag=None, cls=None):
 
 
 # ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    import struct, zlib
+    return (struct.pack(">I", len(payload)) + kind + payload
+            + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF))
+
+
+def _make_png(width: int, height: int, colour_type: int = 2,
+              depth: int = 8, rows=None) -> bytes:
+    """Build a tiny PNG without Pillow: rows must already be filtered."""
+    import struct, zlib
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colour_type]
+    header = struct.pack(">IIBBBBB", width, height, depth, colour_type, 0, 0, 0)
+    if rows is None:
+        stride = (width * channels * depth + 7) // 8
+        rows = [bytes([0]) + bytes(stride) for _ in range(height)]
+    return (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", header)
+            + _png_chunk(b"IDAT", zlib.compress(b"".join(rows)))
+            + _png_chunk(b"IEND", b""))
+
+
+@check("image", "PNG decoder reads truecolour pixels exactly")
+def _():
+    from core.image import png
+    rows = [bytes([0, 255, 0, 0, 0, 255, 0]),        # red, green
+            bytes([0, 0, 0, 255, 10, 20, 30])]       # blue, dark grey
+    data = _make_png(2, 2, 2, 8, rows)
+    img = png.decode(data)
+    eq((img.width, img.height, img.mode), (2, 2, "RGB"))
+    eq(list(img.data), [255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30])
+
+
+@check("image", "PNG decoder applies the Sub/Up/Average/Paeth filters")
+def _():
+    from core.image import png
+    # Two pixels per row, one filter type per row: the second pixel of each
+    # row is encoded relative to what the filter predicts.
+    raw = [
+        bytes([1, 100, 0, 0, 55, 0, 0]),          # Sub: (100,0,0) (155,0,0)
+        bytes([2, 10, 10, 10, 0, 0, 0]),          # Up
+        bytes([3, 20, 0, 0, 0, 0, 0]),            # Average
+        bytes([4, 30, 0, 0, 0, 0, 0]),            # Paeth
+    ]
+    img = png.decode(_make_png(2, 4, 2, 8, raw))
+    eq(img.data[0:3], bytes([100, 0, 0]))
+    eq(img.data[3:6], bytes([155, 0, 0]))
+    eq(img.data[6:9], bytes([110, 10, 10]))
+
+
+@check("image", "PNG decoder expands 1-bit grey to black and white")
+def _():
+    from core.image import png
+    img = png.decode(_make_png(8, 1, 0, 1, [bytes([0, 0b10100000])]))
+    # Bits 1,0,1,0,0,0,0,0 -> white, black, white, black, black, black, ...
+    eq(list(img.data), [255, 255, 255] + [0, 0, 0] + [255, 255, 255]
+       + [0, 0, 0] * 5)
+
+
+@check("image", "PNG decoder resolves palette indices, not intensities")
+def _():
+    import struct, zlib
+    from core.image import png
+    header = struct.pack(">IIBBBBB", 2, 1, 4, 3, 0, 0, 0)
+    palette = bytes([255, 0, 0, 0, 255, 0])
+    data = (b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", header)
+            + _png_chunk(b"PLTE", palette)
+            + _png_chunk(b"IDAT", zlib.compress(bytes([0, 0b00010000])))
+            + _png_chunk(b"IEND", b""))
+    img = png.decode(data)
+    eq(list(img.data), [0, 255, 0, 255, 0, 0])
+
+
+@check("image", "decode_for_display exposes pixels for PNG and JPEG alike")
+def _():
+    from core.image import decode_for_display
+    info = decode_for_display(_make_png(3, 2))
+    eq((info.width, info.height, info.format), (3, 2, "png"))
+    if not info.rgb or len(info.rgb) != 3 * 2 * 3:
+        raise AssertionError("PNG pixels were not kept for resampling")
+    if info.mode != "RGB":
+        raise AssertionError(f"unexpected mode {info.mode}")
+
+
+@check("image", "resize_rgb keeps alpha and resamples to an exact size")
+def _():
+    from core.image import resize_rgb, png_from_rgb
+    src = bytes([255, 0, 0, 255, 0, 255, 0, 128])
+    out = resize_rgb(src, 2, 1, 4, 2, "RGBA")
+    eq(len(out), 4 * 2 * 4)
+    eq(list(out[0:4]), [255, 0, 0, 255])
+    eq(list(out[12:16]), [0, 255, 0, 128])
+    png = png_from_rgb(4, 2, out, "RGBA")
+    eq(png[25], 6)                                  # colour type 6 in IHDR
+
+
+@check("image", "a truncated file fails with a message, not an exception")
+def _():
+    from core.image import decode_for_display
+    info = decode_for_display(b"\x89PNG\r\n\x1a\nGARBAGE")
+    if info.png is not None:
+        raise AssertionError("bad image decoded anyway")
+    if not info.note:
+        raise AssertionError("no explanation for the failure")
+
+
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
+
+@check("search", "Bing result blocks become clean title/url/snippet records")
+def _():
+    from core.search import parse_bing_html
+    html = (
+        '<li class="b_algo"><h2><a href="https://example.com/page">'
+        'Example &amp; Co</a></h2>'
+        '<div class="b_caption"><p>A short description that is long enough '
+        'to be picked out of the caption block.</p></div></li>'
+    )
+    results = parse_bing_html(html, 5)
+    eq(len(results), 1)
+    eq(results[0]["title"], "Example & Co")
+    eq(results[0]["url"], "https://example.com/page")
+    if "short description" not in results[0]["snippet"]:
+        raise AssertionError(results[0]["snippet"])
+
+
+@check("search", "Bing /ck/a redirects are unwrapped to the real target")
+def _():
+    import base64
+    from core.search import _unwrap_bing
+    target = "https://en.wikipedia.org/wiki/Dinosaur"
+    payload = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+    wrapped = "https://www.bing.com/ck/a?u=" + payload + "&ntb=1"
+    eq(_unwrap_bing(wrapped), target)
+
+
+@check("search", "search-engine captcha pages are recognised")
+def _():
+    from core.search import page_looks_blocked
+    captcha = ("<html><body><h1>Unfortunately, bots use DuckDuckGo too.</h1>"
+               "</body></html>")
+    if not page_looks_blocked(captcha):
+        raise AssertionError("captcha page not detected")
+    real = ("<html><head><title>Dinosaur - Wikipedia</title></head><body>"
+            + "Dinosaurs were a diverse group. " * 20 + "</body></html>")
+    if page_looks_blocked(real):
+        raise AssertionError("real article flagged as a captcha")
+
+
+@check("search", "only search-engine hosts are treated as engines")
+def _():
+    from core.search import looks_like_search_engine
+    if not looks_like_search_engine("https://html.duckduckgo.com/html/?q=x"):
+        raise AssertionError("duckduckgo not recognised")
+    if not looks_like_search_engine("https://www.google.com/search?q=x"):
+        raise AssertionError("google not recognised")
+    if looks_like_search_engine("https://example.com/search?q=x"):
+        raise AssertionError("ordinary site misread as a search engine")
+
+
+# ---------------------------------------------------------------------------
 # DOM / tokenizer
 # ---------------------------------------------------------------------------
 
@@ -250,6 +413,49 @@ def _():
     eq(len(box.lines), 1)
     if box.height <= 0:
         raise AssertionError("inline-block has no height")
+
+
+@check("layout", "relayout does not accumulate stale line items")
+def _():
+    _, tree = layout_of('<body><div class="box"><img src="x.png">'
+                        '<div>label</div></div></body>',
+                        ".box{display:block;width:200px;padding:8px}")
+    box = find_box(tree, cls="box")
+    before = len(box.lines)
+    compute_layout(tree, 0, 0, 800, MEASURER)
+    compute_layout(tree, 0, 0, 800, MEASURER)
+    eq(len(box.lines), before, "lines grew on relayout")
+
+
+@check("layout", "inline-block holding block children stacks them")
+def _():
+    _, tree = layout_of(
+        '<body><div class="card"><div class="pic">x</div>'
+        '<div class="cap">hello</div></div></body>',
+        ".card{display:inline-block;width:200px}"
+        ".pic{height:60px}.cap{height:20px}")
+    card = find_box(tree, cls="card")
+    pic = find_box(tree, cls="pic")
+    cap = find_box(tree, cls="cap")
+    if pic.height < 59:
+        raise AssertionError(f"block child not laid out: {pic.height}")
+    if cap.y < pic.y + pic.height - 1:
+        raise AssertionError("block children overlap")
+
+
+@check("layout", "flex items are blockified, so their blocks lay out")
+def _():
+    _, tree = layout_of(
+        '<body><div class="row"><a class="card">'
+        '<div class="inner">x</div></a></div></body>',
+        ".row{display:flex;flex-wrap:wrap;width:600px}"
+        ".card{display:inline-block;width:180px}"
+        ".inner{height:40px}")
+    card = find_box(tree, cls="card")
+    inner = find_box(tree, cls="inner")
+    eq(card.display, "block")
+    if inner.height < 39:
+        raise AssertionError(f"flex item content not laid out: {inner.height}")
 
 
 @check("layout", "deeply nested blocks do not recurse forever")

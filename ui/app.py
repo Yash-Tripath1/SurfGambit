@@ -18,6 +18,7 @@ import queue
 import tkinter as tk
 import traceback
 import urllib.parse
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional
@@ -28,7 +29,7 @@ from core.layout.text import TextMeasurer
 from core.net.cache import HTTPCache
 from core.net.client import HTTPClient
 from core.net.cookies import CookieJar
-from core.search import USER_AGENTS, fetch_image_urls, normalise_input
+from core.search import USER_AGENTS, normalise_input
 from core.storage import data_path
 from core.store import Store
 from ui import pages
@@ -75,6 +76,8 @@ class BrowserApp(tk.Tk):
         self._devtools_text: Dict[str, tk.Text] = {}
         self._console_entry: Optional[ttk.Entry] = None
         self._downloads_window: Optional[tk.Toplevel] = None
+        self._decoded_images: "OrderedDict[str, object]" = OrderedDict()
+        self._decoded_limit = 48
         self._downloads_tree = None
 
         self.store = Store()
@@ -283,10 +286,12 @@ class BrowserApp(tk.Tk):
         tk.Label(nav1, text="\U0001f50d:", fg="white", bg=BG,
                  font=("Arial", 10)).pack(side="left", padx=2)
         self.search_engine_combo = ttk.Combobox(
-            nav1, values=["Google", "DuckDuckGo", "Wikipedia", "Images"],
-            width=11, state="readonly")
+            nav1, values=["Google", "DuckDuckGo", "Bing", "Wikipedia",
+                          "SurfGambit", "Images"],
+            width=12, state="readonly")
         engine = self.settings.get("search_engine", "DuckDuckGo")
-        if engine not in ("Google", "DuckDuckGo", "Wikipedia", "Images"):
+        if engine not in ("Google", "DuckDuckGo", "Bing", "Wikipedia",
+                          "SurfGambit", "Images"):
             engine = "DuckDuckGo"
         self.search_engine_combo.set(engine)
         self.search_engine_combo.pack(side="left", padx=4)
@@ -716,9 +721,13 @@ class BrowserApp(tk.Tk):
     # ------------------------------------------------------------------
     # Images / downloads / source
     # ------------------------------------------------------------------
-    def search_images(self, query: str) -> List[str]:
-        limit = 30 if query.strip() else 8
-        return fetch_image_urls(self.client, query, limit=min(limit, 12))
+    def search_web(self, query: str):
+        from core.search import web_results
+        return web_results(self.client, query)
+
+    def search_images(self, query: str):
+        from core.search import image_results
+        return image_results(self.client, query, limit=24)
 
     def offer_download(self, url: str, suggested: str = "") -> None:
         tab = self.current_tab()
@@ -930,15 +939,38 @@ class BrowserApp(tk.Tk):
         widget.insert("end", f"\u203a {code}\n")
         tab = self.current_tab()
         try:
-            from core.js.surfscript import Interpreter, to_string
+            from core.js.surfscript import to_string
 
             interp = tab.script_runtime.interp if (tab and tab.script_runtime) \
-                else Interpreter()
+                else None
+            if interp is None:
+                # No runtime exists when scripting is off (the default) or the
+                # page has no scripts. Build one for the open document so
+                # `document`, `location` and friends still answer.
+                interp = self._console_interpreter(tab)
             widget.insert("end", to_string(interp.evaluate_source(code)) + "\n")
         except Exception as exc:
             widget.insert("end", f"{type(exc).__name__}: {exc}\n")
         widget.see("end")
         widget.configure(state="disabled")
+
+    def _console_interpreter(self, tab) -> "object":
+        """An interpreter bound to the current document, for console use."""
+        from core.js.surfscript import Interpreter
+
+        runtime = getattr(tab, "script_runtime", None) if tab is not None else None
+        if runtime is not None and getattr(runtime, "interp", None) is not None:
+            return runtime.interp
+        if tab is not None and getattr(tab, "dom", None) is not None:
+            try:
+                from core.js.dom_bridge import DocumentRuntime
+
+                runtime = DocumentRuntime(tab.dom, base_url=tab.current_url or "")
+                tab.script_runtime = runtime
+                return runtime.interp
+            except Exception:
+                pass
+        return Interpreter()
 
     def inspect_node(self, node) -> None:
         """Open devtools and highlight a node's ancestry."""
@@ -1064,6 +1096,21 @@ class BrowserApp(tk.Tk):
     # ------------------------------------------------------------------
     # Thread plumbing
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Decoded-image cache (shared by all tabs)
+    # ------------------------------------------------------------------
+    def decoded_image(self, url: str):
+        payload = self._decoded_images.get(url)
+        if payload is not None:
+            self._decoded_images.move_to_end(url)
+        return payload
+
+    def remember_image(self, url: str, payload) -> None:
+        self._decoded_images[url] = payload
+        self._decoded_images.move_to_end(url)
+        while len(self._decoded_images) > self._decoded_limit:
+            self._decoded_images.popitem(last=False)
+
     def submit(self, fn: Callable[[], None]) -> None:
         """Queue work on the shared pool (8 workers, daemon threads)."""
         def guarded() -> None:

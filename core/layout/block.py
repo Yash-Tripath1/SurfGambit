@@ -15,7 +15,7 @@ Rules implemented:
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from ..values import Length
 from .box import LayoutBox, resolve_length
@@ -23,6 +23,12 @@ from .inline import layout_inline
 from .text import TextMeasurer
 
 __all__ = ["compute_layout", "read_box_model"]
+
+
+def is_out_of_flow(box: LayoutBox) -> bool:
+    """`position: absolute` / `fixed` boxes do not take part in normal flow."""
+    return str(box.style.get("position") or "static").lower() in (
+        "absolute", "fixed")
 
 _EPSILON = 0.01
 
@@ -125,9 +131,13 @@ def _layout_run(children: List[LayoutBox], parent: LayoutBox, y: float,
 # ---------------------------------------------------------------------------
 
 def _layout_block(box: LayoutBox, x: float, y: float, available_width: float,
-                  measurer: TextMeasurer) -> None:
+                  measurer: TextMeasurer,
+                  content_width: Optional[float] = None) -> None:
     read_box_model(box, available_width)
     style = box.style
+    # Lines are rebuilt from scratch on every pass; stale ones would paint
+    # text and images from the previous layout at their old coordinates.
+    box.lines = []
 
     # `margin: auto` centring for fixed-width blocks.
     auto_left = _is_auto(style.get("margin-left"))
@@ -137,8 +147,9 @@ def _layout_block(box: LayoutBox, x: float, y: float, available_width: float,
     if auto_right:
         box.margin_right = 0.0
 
-    content_width = _resolve_content_width(box, available_width,
-                                           shrink_to_fit=False)
+    if content_width is None:
+        content_width = _resolve_content_width(box, available_width,
+                                               shrink_to_fit=False)
     border_box_width = (content_width + box.padding_left + box.padding_right
                         + box.border_left + box.border_right)
 
@@ -158,7 +169,8 @@ def _layout_block(box: LayoutBox, x: float, y: float, available_width: float,
     content_x = box.content_x
     cursor = box.content_y
 
-    children = box.children
+    children = [c for c in box.children if not is_out_of_flow(c)]
+    absolutes = [c for c in box.children if is_out_of_flow(c)]
     has_block_child = any(c.is_block_level() for c in children)
 
     if not has_block_child:
@@ -214,6 +226,89 @@ def _layout_block(box: LayoutBox, x: float, y: float, available_width: float,
 
     box.height = (max(0.0, content_height) + box.padding_top + box.padding_bottom
                   + box.border_top + box.border_bottom)
+
+    # Out-of-flow children were skipped above; place them now that the
+    # containing block has a definite size.
+    for child in absolutes:
+        _layout_out_of_flow(child, box, cursor, measurer)
+
+
+def _layout_out_of_flow(child: LayoutBox, parent: LayoutBox, static_y: float,
+                        measurer: TextMeasurer) -> None:
+    """Place an absolutely positioned child against its containing block.
+
+    The containing block is the parent's padding box. Without `top`/`left` the
+    box keeps its static position, which is what most CSS dropdowns rely on;
+    with them it is taken out of the flow and offset, so a hidden menu no
+    longer squeezes the content next to it.
+    """
+    style = child.style
+    fixed = str(style.get("position") or "").lower() == "fixed"
+    if fixed:
+        cb_x, cb_y = 0.0, 0.0
+        cb_w = parent.width or parent.content_width
+    else:
+        cb_x = parent.x + parent.border_left
+        cb_y = parent.y + parent.border_top
+        cb_w = (parent.padding_left + parent.content_width
+                + parent.padding_right)
+
+    read_box_model(child, max(1.0, cb_w))
+    left = resolve_length(style.get("left"), cb_w)
+    right = resolve_length(style.get("right"), cb_w)
+    top = resolve_length(style.get("top"), parent.height or cb_w)
+    bottom = resolve_length(style.get("bottom"), parent.height or cb_w)
+    explicit_w = resolve_length(style.get("width"), cb_w)
+
+    if explicit_w is not None:
+        width = explicit_w
+    else:
+        # Shrink-to-fit: lay the box out at the containing-block width first
+        # to measure its content, then cap the result.
+        width = _shrink_to_fit(child, measurer, cb_w)
+
+    if left is not None:
+        x = cb_x + left + child.margin_left
+    elif right is not None:
+        x = cb_x + cb_w - right - width - child.margin_right
+    else:
+        x = cb_x + (parent.padding_left if not fixed else 0.0) + child.margin_left
+    if top is not None:
+        y = cb_y + top + child.margin_top
+    elif bottom is not None:
+        y = cb_y + (parent.height or 0.0) - bottom - child.height - child.margin_bottom
+    else:
+        y = static_y
+
+    compute_layout(child, x, y, max(1.0, width), measurer)
+    # `compute_layout` resolves width from the containing block; force the
+    # shrink-to-fit result when there is no explicit width.
+    if explicit_w is None and child.width > width + 0.5:
+        child.width = width
+
+
+def _shrink_to_fit(box: LayoutBox, measurer: TextMeasurer, available: float) -> float:
+    """Preferred width of `box`, capped to `available` like CSS does."""
+    from .inline import collect_inline_items
+
+    read_box_model(box, available)
+    if box.children:
+        if any(c.is_block_level() for c in box.children):
+            widest = 0.0
+            for child in box.children:
+                read_box_model(child, available)
+                explicit = resolve_length(child.style.get("width"), available)
+                widest = max(widest, explicit or 0.0)
+            if widest:
+                return min(available, widest + box.padding_left
+                           + box.padding_right + box.border_left + box.border_right)
+            return available
+        items = collect_inline_items(box, measurer, available)
+        total = sum(getattr(i, "width", 0.0) for i in items if i.kind != "br")
+        if total:
+            return min(available, total + box.padding_left + box.padding_right
+                       + box.border_left + box.border_right)
+    return available
 
 
 def _geometry_is_sane(box: LayoutBox, slack: float = 2.0) -> bool:
@@ -310,6 +405,12 @@ def _layout_flex_container(box: LayoutBox, x: float, y: float,
     box.height = (max(0.0, content_height) + box.padding_top + box.padding_bottom
                   + box.border_top + box.border_bottom)
 
+    # Out-of-flow children were skipped above; place them now that the
+    # containing block has a definite size.
+    for child in box.children:
+        if is_out_of_flow(child):
+            _layout_out_of_flow(child, box, box.content_y, measurer)
+
     if not _geometry_is_sane(box):
         _fall_back_to_block(box, x, y, available_width, measurer)
 
@@ -336,6 +437,12 @@ def _layout_grid_container(box: LayoutBox, x: float, y: float,
     box.height = (max(0.0, content_height) + box.padding_top + box.padding_bottom
                   + box.border_top + box.border_bottom)
 
+    # Out-of-flow children were skipped above; place them now that the
+    # containing block has a definite size.
+    for child in box.children:
+        if is_out_of_flow(child):
+            _layout_out_of_flow(child, box, box.content_y, measurer)
+
     if not _geometry_is_sane(box):
         _fall_back_to_block(box, x, y, available_width, measurer)
 
@@ -343,6 +450,16 @@ def _layout_grid_container(box: LayoutBox, x: float, y: float,
 def _layout_inline_root(box: LayoutBox, x: float, y: float,
                         available_width: float, measurer: TextMeasurer) -> None:
     read_box_model(box, available_width)
+    if any(child.is_block_level() for child in box.children):
+        # An inline-block (or float-like atomic box) holding block children
+        # establishes a block formatting context: its content stacks as
+        # blocks, it does not flatten into one inline run.
+        border_box = max(0.0, available_width - box.margin_left - box.margin_right)
+        content_width = max(0.0, border_box - box.padding_left - box.padding_right
+                            - box.border_left - box.border_right)
+        _layout_block(box, x, y, available_width, measurer,
+                      content_width=content_width)
+        return
     box.x = x + box.margin_left
     box.y = y
     box.width = max(0.0, available_width - box.margin_left - box.margin_right)

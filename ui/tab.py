@@ -28,10 +28,14 @@ from core.layout.block import apply_list_markers, compute_layout
 from core.layout.box import LayoutBox, build_layout_tree
 from core.style import parse_stylesheet
 from core.style.cascade import compute_styles
+from core.image import decode_for_display, png_from_rgb, resize_rgb
 from ui import pages
 from ui.renderer import Renderer
 
 MAX_STYLESHEETS = 8
+# Longest side we decode to. Bigger costs seconds in pure Python; smaller makes
+# photographs look soft on a normal display.
+IMAGE_MAX_DIM = 900
 INTERNAL_PREFIX = "surfgambit://"
 
 
@@ -72,14 +76,50 @@ def stylesheet_links(dom: HTMLNode, base_url: str) -> List[str]:
     return out
 
 
+def _best_src(node: HTMLNode) -> str:
+    """Pick a usable URL from src / srcset / common lazy-loading attributes."""
+    src = (node.attributes.get("src") or "").strip()
+    if src and not src.startswith("data:"):
+        return src
+    srcset = node.attributes.get("srcset") or node.attributes.get("data-srcset") or ""
+    if srcset:
+        best = ""
+        best_width = -1
+        for part in srcset.split(","):
+            bits = part.strip().split()
+            if not bits:
+                continue
+            url = bits[0]
+            width = 0
+            if len(bits) > 1 and bits[1].endswith("w"):
+                try:
+                    width = int(bits[1][:-1])
+                except ValueError:
+                    width = 0
+            elif len(bits) > 1 and bits[1].endswith("x"):
+                try:
+                    width = int(float(bits[1][:-1]) * 1000)
+                except ValueError:
+                    width = 0
+            if width > best_width:
+                best, best_width = url, width
+        if best:
+            return best
+    for attribute in ("data-src", "data-original", "data-lazy-src", "data-url"):
+        value = (node.attributes.get(attribute) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def image_urls(dom: HTMLNode, base_url: str) -> List[Tuple[str, HTMLNode]]:
     out: List[Tuple[str, HTMLNode]] = []
     seen = set()
     for node in dom.walk():
         if node.tag != "img":
             continue
-        src = node.attributes.get("src")
-        if not src:
+        src = _best_src(node)
+        if not src or src.startswith("data:"):
             continue
         absolute = urllib.parse.urljoin(base_url, src)
         if absolute in seen:
@@ -87,6 +127,19 @@ def image_urls(dom: HTMLNode, base_url: str) -> List[Tuple[str, HTMLNode]]:
         seen.add(absolute)
         out.append((absolute, node))
     return out
+
+
+def _query_from_search_url(url: str) -> str:
+    """Extract ?q= / ?query= / ?search= from a search-engine URL."""
+    try:
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    except ValueError:
+        return ""
+    for key in ("q", "query", "search", "p"):
+        value = (params.get(key) or [""])[0]
+        if value.strip():
+            return value.strip()
+    return ""
 
 
 class BrowserTab(tk.Frame):
@@ -117,6 +170,10 @@ class BrowserTab(tk.Frame):
 
         self.images: Dict[str, Optional[tk.PhotoImage]] = {}
         self.loading_images: set = set()
+        self.image_errors: Dict[str, str] = {}
+        self.image_info: Dict[str, object] = {}
+        self._sized_photos: Dict[Tuple[str, int, int], tk.PhotoImage] = {}
+        self._relayout_job = None
         self.form_widgets: List[tk.Widget] = []
         self.form_entries: Dict[HTMLNode, tk.Widget] = {}
 
@@ -137,6 +194,7 @@ class BrowserTab(tk.Frame):
 
         self.renderer = Renderer(self.canvas, app.measurer,
                                  image_provider=self.get_image,
+                                 sized_image_provider=self.get_image_for,
                                  base_url=self.current_url)
         self.renderer.form_factory = self._make_form_widget
 
@@ -511,6 +569,14 @@ class BrowserTab(tk.Frame):
         try:
             response = client.get(url, force_refresh=force)
             if not response.ok:
+                from core.search import looks_like_search_engine
+                if (response.status in (403, 429, 503)
+                        and looks_like_search_engine(url)
+                        and _query_from_search_url(url)):
+                    self.app.ui(lambda: self._use_internal_results(
+                        generation, url,
+                        f"the engine answered HTTP {response.status}"))
+                    return
                 raise RuntimeError(f"HTTP {response.status} {response.reason}")
             if not response.is_html:
                 raise RuntimeError(
@@ -544,9 +610,76 @@ class BrowserTab(tk.Frame):
             return
         self.current_url = final_url
         self.set_loading(False)
+        if self._looks_javascript_only(html_text, final_url):
+            query = _query_from_search_url(final_url)
+            if query:
+                self.app.set_status(
+                    "That engine needs JavaScript \u2014 showing SurfGambit results")
+                self.navigate("surfgambit://search?q="
+                              + urllib.parse.quote_plus(query))
+                return
+        if self._looks_blocked(html_text, final_url):
+            query = _query_from_search_url(final_url)
+            if query:
+                self._use_internal_results(
+                    generation, final_url,
+                    "the engine asked for a captcha")
+                return
         self._install_document(html_text, extra_sources=sheet_sources[1:])
         self.app.record_history(final_url, self.title)
         self.app.set_status("Done")
+
+    def _use_internal_results(self, generation: int, url: str,
+                              reason: str) -> None:
+        """Fall back to the built-in results page for a blocked search."""
+        if generation != self.generation or not self.winfo_exists():
+            return
+        query = _query_from_search_url(url)
+        if not query:
+            return
+        self.set_loading(False)
+        self.app.set_status(
+            f"Could not reach that engine ({reason}) \u2014 showing SurfGambit results")
+        self.navigate("surfgambit://search?q=" + urllib.parse.quote_plus(query))
+
+    def _looks_blocked(self, html_text: str, url: str = "") -> bool:
+        """True when a search engine served a captcha/bot wall instead of results."""
+        from core.search import looks_like_search_engine, page_looks_blocked
+
+        if not looks_like_search_engine(url or self.current_url or ""):
+            return False
+        return page_looks_blocked(html_text)
+
+    def _looks_javascript_only(self, html_text: str, url: str = "") -> bool:
+        """True for search engines that now answer with a script shell only.
+
+        We do not try to guess for ordinary pages — only for hosts known to be
+        search engines, where an empty body means "you need JavaScript".
+        """
+        from core.search import looks_like_search_engine
+
+        if not looks_like_search_engine(url or self.current_url or ""):
+            return False
+        from core.dom import parse, visible_text
+        try:
+            dom = parse(html_text)
+            text = visible_text(dom).strip()
+        except Exception:
+            return False
+        if len(text) < 60:
+            return True
+        # A shell page still has the site chrome, cookie notices and inline
+        # scripts, but no result links: every result a search engine shows is
+        # an <a href="http...">.
+        outbound = 0
+        for node in dom.walk():
+            if node.tag == "a":
+                href = (node.attributes.get("href") or "").strip().lower()
+                if href.startswith(("http://", "https://")):
+                    outbound += 1
+                    if outbound >= 3:
+                        return False
+        return True
 
     def _on_failed(self, generation: int, url: str, message: str) -> None:
         if generation != self.generation or not self.winfo_exists():
@@ -636,6 +769,10 @@ class BrowserTab(tk.Frame):
                 source = self.app.last_source or ""
             html_text = pages.source_page("View source", source or "(no source)")
             self.title = "View source"
+        elif path == "search":
+            query = params.get("q", "").strip()
+            self._start_web_search(query)
+            return
         elif path == "images":
             query = params.get("q", "")
             self._start_image_search(query)
@@ -689,27 +826,64 @@ class BrowserTab(tk.Frame):
             "surfgambit://settings?msg=" + urllib.parse.quote("Settings saved.")
         )
 
+    def _start_web_search(self, query: str) -> None:
+        from core.search import web_results
+
+        self.set_loading(True)
+        self.app.set_status(f"Searching for {query!r} \u2026")
+        self.title = f"{query} - search"
+        generation = self.generation
+
+        def work() -> None:
+            try:
+                outcome = web_results(self.app.client, query)
+                self.app.ui(lambda: self._finish_web_search(query, outcome, generation))
+            except Exception as exc:            # noqa: BLE001
+                message = str(exc)
+                self.app.ui(lambda: self._finish_web_search(
+                    query, {"results": [], "source": "", "errors": [message]}, generation))
+
+        self.app.submit(work)
+
+    def _finish_web_search(self, query: str, outcome, generation: int) -> None:
+        if not self.winfo_exists() or generation != self.generation:
+            return
+        self.set_loading(False)
+        results = outcome.get("results") or []
+        errors = outcome.get("errors") or []
+        html_text = pages.search_page(query, results, outcome.get("source", ""),
+                                      "" if results else (errors[0] if errors else ""))
+        self._install_document(html_text)
+        self.title = f"{query} - SurfGambit search"
+        self.app.set_status(f"{len(results)} result(s) for {query!r}")
+        self.app.update_chrome(self)
+
     def _start_image_search(self, query: str) -> None:
         self.set_loading(True)
         self.app.set_status(f"Searching images for {query!r} ...")
 
+        generation = self.generation
+
         def work() -> None:
             try:
-                urls = self.app.search_images(query)
-                self.app.ui(lambda: self._finish_image_search(query, urls, ""))
-            except Exception as exc:
+                found = self.app.search_images(query)
+                self.app.ui(lambda: self._finish_image_search(query, found, "", generation))
+            except Exception as exc:            # noqa: BLE001
                 message = str(exc)
-                self.app.ui(lambda: self._finish_image_search(query, [], message))
+                self.app.ui(lambda: self._finish_image_search(query, [], message, generation))
 
         self.app.submit(work)
 
-    def _finish_image_search(self, query: str, urls: List[str], error: str) -> None:
-        if not self.winfo_exists():
+    def _finish_image_search(self, query: str, images, error: str,
+                             generation: int = -1) -> None:
+        if not self.winfo_exists() or generation != self.generation:
             return
         self.set_loading(False)
         self.title = f"Images: {query}"
-        html_text = pages.image_search_page(query, urls, error)
+        html_text = pages.image_search_page(query, images, error)
         self._install_document(html_text)
+        self.app.set_status(f"{len(images)} picture(s) for {query!r}")
+        self.app.update_chrome(self)
 
     # ------------------------------------------------------------------
     # Document installation
@@ -732,6 +906,8 @@ class BrowserTab(tk.Frame):
         self.css_sheets = [parse_stylesheet(src) for src in sources]
         self.dom = dom
         self.images.clear()
+        self.image_info.clear()
+        self._sized_photos.clear()
         self.loading_images.clear()
         self.search_term = ""
         self.title = document_title(dom) or self.title
@@ -995,26 +1171,46 @@ class BrowserTab(tk.Frame):
             self.app.submit(lambda u=url: self._fetch_image(u, generation))
 
     def _fetch_image(self, url: str, generation: int) -> None:
-        data = None
+        """Fetch *and decode* off the UI thread; Tk only sees PNG bytes."""
+        payload = None
+        note = ""
         try:
-            response = self.app.client.get(url, referer=self.current_url)
-            if response.ok:
-                data = response.body
-        except Exception:
-            data = None
-        self.app.ui(lambda: self._store_image(url, data, generation))
+            cached = self.app.decoded_image(url)
+            if cached is not None:
+                payload = cached
+            else:
+                response = self.app.client.get(url, referer=self.current_url)
+                if response.ok:
+                    info = decode_for_display(response.body, max_dim=IMAGE_MAX_DIM)
+                    if info.png:
+                        payload = info
+                        self.app.remember_image(url, info)
+                    else:
+                        note = info.note
+                else:
+                    note = f"HTTP {response.status}"
+        except Exception as exc:                 # noqa: BLE001 - image failure
+            note = str(exc)
+        self.app.ui(lambda: self._store_image(url, payload, generation, note))  # noqa: E501
 
-    def _store_image(self, url: str, data: Optional[bytes], generation: int) -> None:
+    def _store_image(self, url: str, data, generation: int,
+                     note: str = "") -> None:
         self.loading_images.discard(url)
         if not self.winfo_exists() or generation != self.generation:
             return
         photo = None
-        if data:
-            try:
-                photo = tk.PhotoImage(data=base64.b64encode(data).decode("ascii"))
-            except Exception:
-                photo = None
+        if data is not None:
+            png = getattr(data, "png", data)
+            if png:
+                try:
+                    photo = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"))
+                except Exception:
+                    photo = None
+            self.image_info[url] = data
+        if photo is None and note:
+            self.image_errors[url] = note
         self.images[url] = photo
+        image_arrived = False
         if photo is not None and self.dom is not None:
             for node in self.dom.walk():
                 if node.tag != "img":
@@ -1023,14 +1219,63 @@ class BrowserTab(tk.Frame):
                 if not src:
                     continue
                 if urllib.parse.urljoin(self.current_url, src) == url:
-                    if "width" not in node.attributes:
+                    # Always record the intrinsic size; the layout uses it to
+                    # keep the aspect ratio when only one dimension is given.
+                    if node.replaced_width != float(photo.width()):
                         node.replaced_width = float(photo.width())
-                    if "height" not in node.attributes:
+                        image_arrived = True
+                    if node.replaced_height != float(photo.height()):
                         node.replaced_height = float(photo.height())
-        self.schedule_paint()
+                        image_arrived = True
+        if image_arrived:
+            # The page was laid out with a placeholder for this image; now that
+            # its real size is known one relayout keeps everything below it in
+            # the right place. Coalesced so a gallery costs one pass.
+            self.schedule_relayout()
+        else:
+            self.schedule_paint()
+
+    def schedule_relayout(self, delay_ms: int = 60) -> None:
+        """Coalesce relayouts triggered by late-arriving resources."""
+        if self._relayout_job is not None:
+            return
+        def run() -> None:
+            self._relayout_job = None
+            if self.winfo_exists():
+                self.relayout()
+        self._relayout_job = self.after(delay_ms, run)
 
     def get_image(self, url: str) -> Optional[tk.PhotoImage]:
         return self.images.get(url)
+
+    def get_image_for(self, url: str, width: int, height: int) -> Optional[tk.PhotoImage]:
+        """A photo of exactly the box size, re-encoded from decoded pixels."""
+        info = self.image_info.get(url)
+        if info is None or width <= 0 or height <= 0:
+            return None
+        w = max(1, min(int(width), 4000))
+        h = max(1, min(int(height), 4000))
+        if (info.width, info.height) == (w, h):
+            return self.images.get(url)
+        # Without decoded pixels the exact-size re-encode is impossible; let
+        # the renderer's whole-factor fallback handle it rather than handing
+        # back a photo that would spill out of the CSS box.
+        if not getattr(info, "rgb", None):
+            return None
+        key = (url, w, h)
+        cached = self._sized_photos.get(key)
+        if cached is not None:
+            return cached
+        try:
+            pixels = resize_rgb(info.rgb, info.width, info.height, w, h, info.mode)
+            png = png_from_rgb(w, h, pixels, info.mode)
+            photo = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"))
+        except Exception:
+            return None
+        if len(self._sized_photos) > 120:
+            self._sized_photos.clear()
+        self._sized_photos[key] = photo
+        return photo
 
     # ------------------------------------------------------------------
     # Form widgets

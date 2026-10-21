@@ -115,7 +115,10 @@ _NUMERIC = {
 }
 
 # Properties stored as Length-or-None.
-_LENGTHY = {"width", "height", "min-width", "max-width", "min-height", "max-height"}
+_LENGTHY = {"width", "height", "min-width", "max-width", "min-height", "max-height",
+            # Offsets for `position: absolute|fixed`; "auto" means "keep the
+            # static position", which parse_length_or_percent reports as None.
+            "top", "right", "bottom", "left"}
 
 # Properties stored as a colour or None.
 _COLOURS = {
