@@ -238,3 +238,40 @@ mostly done; what is still deliberately out of scope is a real JS engine,
 `position: absolute/fixed`, floats, transforms and WebP/AVIF decoding.
 
 *Built by Yash Tripathi.*
+
+---
+
+## v3.0 — the phases the plan called "later"
+
+2.0 fixed what was broken. 3.0 did the three phases that were still on paper.
+
+**Phase 2, performance.** The honest measurement: opening
+`en.wikipedia.org/wiki/Cat` produced 23 626 layout boxes, 41 804 canvas items
+and a 705 ms paint, and every scroll step paid for all of it. The renderer now
+takes a viewport band and paints only what intersects it, the tab keeps 2.5
+screens of slack so normal scrolling is native Tk scrolling, and leaving the
+band triggers one culled repaint (~30 ms, ~1 600 items). Same page, 23× fewer
+canvas items.
+
+Around that: a real `ThreadPoolExecutor(8)` instead of a thread per image, an
+on-disk HTTP cache with `If-None-Match` revalidation, streamed downloads with
+`Content-Length` validation, and history writes moved off the UI thread.
+
+**Phase 3, SurfScript.** The 1.x interpreter understood `let`, arithmetic and
+`document.getElementById`. It could not run a `for` loop. It is now a lexer,
+recursive-descent parser and tree-walking interpreter for a documented subset:
+loops, functions, closures, recursion, arrays, objects, ternary, logical
+operators, comments, string and array methods, `Math`/`JSON`, plus a DOM with
+`createElement`, `appendChild`, `classList`, `style`, `addEventListener`,
+bubbling events, inline `onclick` and timers. Every script runs with a step and
+wall-clock budget and no access to the network or the filesystem. There is a
+`surfgambit://demo` page that exercises all of it, and you can click it.
+
+**Phase 4, product.** Download manager with progress and cancel (`Ctrl+J`), a
+JavaScript console REPL that evaluates in the page's own context, a Network tab
+that shows every request and cache hit, save-image and inspect-element in the
+context menu, a loading spinner, 57 self-checks, GitHub Actions, and
+`docs/ARCHITECTURE.md`.
+
+The lesson 3.0 taught: culling is the whole game. A canvas can hold a page of
+any length if you stop pretending it has to hold all of it at once.

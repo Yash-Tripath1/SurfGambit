@@ -18,7 +18,7 @@ from core.layout.box import LayoutBox, build_layout_tree
 from core.layout.text import FontSpec, TextMeasurer, estimate_metrics
 
 __all__ = [
-    "LayoutBox", "TextMeasurer", "build_layout_tree", "compute_layout",
+    "HTMLNode", "LayoutBox", "TextMeasurer", "build_layout_tree", "compute_layout",
     "parse_px_val",
 ]
 

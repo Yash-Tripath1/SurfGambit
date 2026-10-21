@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  self-checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Engine self-checks (no network, no display)
+        run: python -m tests.run --verbose
+      - name: Byte-compile every module
+        run: python -m compileall -q core ui browser.py parser.py layout.py network.py cookies.py accounts.py css_compiler.py surfscript.py game.py

@@ -19,7 +19,7 @@ from core.style import Rule, Stylesheet, parse_selector, parse_stylesheet
 from core.style.cascade import compute_styles
 
 __all__ = [
-    "HTMLNode", "HTMLParser", "CSSParser", "parse_tag_content",
+    "HTMLNode", "TEXT_TAG", "parse_fragment", "HTMLParser", "CSSParser", "parse_tag_content",
     "decode_html_entities", "get_style_sheets", "matches_selector",
     "matches_selector_simple", "resolve_styles",
 ]

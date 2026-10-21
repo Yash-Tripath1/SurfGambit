@@ -17,7 +17,7 @@ Only public-domain-avoiding plain CSS here, no dependencies.
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Lengths

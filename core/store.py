@@ -10,10 +10,11 @@ aside rather than overwritten.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from core.storage import atomic_write, data_path, load_json, save_json
+from core.storage import data_path, load_json, save_json
 
 HISTORY_LIMIT = 3000
 BOOKMARK_LIMIT = 1000
@@ -71,6 +72,8 @@ class Store:
         self._bookmarks: Optional[List[Dict[str, str]]] = None
         self._history: Optional[List[Dict[str, Any]]] = None
         self._downloads: Optional[List[Dict[str, Any]]] = None
+        self._flush_lock = threading.Lock()
+        self._flush_timer: Optional[threading.Timer] = None
 
     # -- settings -------------------------------------------------------
     def load_settings(self) -> Dict[str, Any]:
@@ -192,6 +195,23 @@ class Store:
     def _flush_history(self) -> bool:
         return save_json(self._history_path, self._history or [])
 
+    def _schedule_flush(self) -> None:
+        """Write history off the UI thread, coalescing bursts of visits."""
+        with self._flush_lock:
+            if self._flush_timer is not None:
+                self._flush_timer.cancel()
+            timer = threading.Timer(0.8, self.flush)
+            timer.daemon = True
+            self._flush_timer = timer
+            timer.start()
+
+    def flush(self) -> bool:
+        """Force a write of the in-memory history (called on shutdown)."""
+        with self._flush_lock:
+            self._flush_timer = None
+            data = list(self._history or [])
+        return save_json(self._history_path, data)
+
     def record_visit(self, url: str, title: str) -> None:
         if not url.startswith(("http://", "https://")):
             return
@@ -202,7 +222,7 @@ class Store:
                 if now - float(entry["visited"]) < VISIT_MERGE_SECONDS:
                     entry["visited"] = now
                     entry["title"] = title or entry["title"]
-                    self._flush_history()
+                    self._schedule_flush()
                     return
                 history.remove(entry)
                 history.insert(0, {
@@ -212,12 +232,12 @@ class Store:
                     "count": int(entry.get("count", 1)) + 1,
                 })
                 self._history = history[:HISTORY_LIMIT]
-                self._flush_history()
+                self._schedule_flush()
                 return
         history.insert(0, {"url": url, "title": title or url,
                            "visited": now, "count": 1})
         self._history = history[:HISTORY_LIMIT]
-        self._flush_history()
+        self._schedule_flush()
 
     def clear_history(self) -> None:
         self._history = []

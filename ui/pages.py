@@ -9,9 +9,8 @@ into markup, which meant a bookmark titled `<script>` became markup.
 from __future__ import annotations
 
 import html
-import time
 import urllib.parse
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 
 __all__ = [
     "esc", "welcome_page", "bookmarks_page", "history_page", "downloads_page",
@@ -75,6 +74,7 @@ def _nav() -> str:
             '<a href="surfgambit://history">History</a>'
             '<a href="surfgambit://downloads">Downloads</a>'
             '<a href="surfgambit://settings">Settings</a>'
+            '<a href="surfgambit://demo">Script demo</a>'
             '</div>')
 
 
@@ -83,7 +83,7 @@ def _nav() -> str:
 # ---------------------------------------------------------------------------
 
 def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
-                 version: str = "2.0") -> str:
+                 version: str = "3.0") -> str:
     if profile:
         greeting = (f'<p class="sub">Signed in as <strong>{esc(profile)}</strong> &middot; '
                     f'<a href="surfgambit://logout">Sign out</a></p>')
@@ -114,8 +114,9 @@ def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
         <tr><td>HTML tokenizer</td><td class="ok">state machine, implied tags, RAWTEXT</td></tr>
         <tr><td>CSS cascade</td><td class="ok">specificity, inheritance, @media, shorthands</td></tr>
         <tr><td>Layout</td><td class="ok">box model, inline flow, tables, collapsing margins</td></tr>
-        <tr><td>Network</td><td class="ok">GET/POST, TLS verified, gzip, chunked</td></tr>
-        <tr><td>Scripting</td><td class="warn">SurfScript subset (opt-in per page)</td></tr>
+        <tr><td>Network</td><td class="ok">GET/POST, TLS verified, gzip, chunked, HTTP cache</td></tr>
+        <tr><td>Scripting</td><td class="ok">SurfScript 2.0 &mdash; loops, functions, DOM events</td></tr>
+        <tr><td>Painting</td><td class="ok">viewport culling, 40 000 px pages scroll at full speed</td></tr>
       </table>
     </div>
     {quick}
@@ -125,7 +126,8 @@ def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
         <a href="https://example.com">example.com</a> &middot;
         <a href="https://text.npr.org">text.npr.org</a> &middot;
         <a href="https://news.ycombinator.com">news.ycombinator.com</a> &middot;
-        <a href="https://en.wikipedia.org/wiki/Web_browser">wikipedia.org</a>
+        <a href="https://en.wikipedia.org/wiki/Web_browser">wikipedia.org</a> &middot;
+        <a href="surfgambit://demo">the script demo</a>
       </p>
       <p class="muted">Type a search phrase in the address bar to search the web.</p>
     </div>
@@ -223,7 +225,7 @@ def settings_page(settings: Dict[str, str], message: str = "",
                   error: str = "") -> str:
     # Keep these lists in step with core.search, otherwise a saved choice
     # silently falls back to the default engine.
-    from core.search import SEARCH_ENGINES, USER_AGENTS
+    from core.search import SEARCH_ENGINES
 
     ua_options = {
         "Chrome": "Chrome on Windows",
@@ -385,3 +387,94 @@ def image_search_page(query: str, image_urls: List[str], error: str = "") -> str
 def source_page(title: str, source: str) -> str:
     return _document(title, f'<h1>{esc(title)}</h1><pre style="white-space:pre; '
                             f'font-family:monospace; font-size:12px;">{esc(source)}</pre>')
+
+# ---------------------------------------------------------------------------
+# SurfScript demo — the page that proves the engine is wired end to end
+# ---------------------------------------------------------------------------
+
+def demo_page(js_enabled: bool) -> str:
+    body = """
+    <h1>SurfScript demo</h1>
+    <p class="sub">Every number below is produced by the script on this page,
+       running inside SurfGambit's own interpreter.</p>
+    {notice}
+    <div class="card">
+      <h2>1 &middot; Counter (addEventListener)</h2>
+      <p>Count: <strong id="count">0</strong></p>
+      <p><button id="inc">Add one</button>
+         <button id="reset">Reset</button></p>
+    </div>
+    <div class="card">
+      <h2>2 &middot; Styling from script</h2>
+      <p><button id="paint">Toggle the highlight</button></p>
+      <div id="box" style="padding:12px;border:1px solid #d0d0d0;">
+        This paragraph is restyled by <code>classList.toggle()</code>.
+      </div>
+    </div>
+    <div class="card">
+      <h2>3 &middot; Building DOM</h2>
+      <p><button id="add">Add a list item</button></p>
+      <ul id="list"><li>built by createElement()</li></ul>
+    </div>
+    <div class="card">
+      <h2>4 &middot; Timers</h2>
+      <p>Uptime: <span id="clock">0</span>s &mdash; driven by setInterval().</p>
+    </div>
+    <div class="card">
+      <h2>5 &middot; A small program</h2>
+      <pre id="fib"></pre>
+    </div>
+    <script>
+      let count = 0;
+      let uptime = 0;
+      let added = 0;
+
+      document.getElementById('inc').addEventListener('click', function () {
+        count = count + 1;
+        document.getElementById('count').textContent = String(count);
+      });
+
+      document.getElementById('reset').addEventListener('click', function () {
+        count = 0;
+        document.getElementById('count').textContent = '0';
+      });
+
+      document.getElementById('paint').addEventListener('click', function () {
+        document.getElementById('box').classList.toggle('hl');
+      });
+
+      document.getElementById('add').addEventListener('click', function () {
+        added = added + 1;
+        let item = document.createElement('li');
+        item.textContent = 'item ' + added;
+        document.getElementById('list').appendChild(item);
+      });
+
+      setInterval(function () {
+        uptime = uptime + 1;
+        document.getElementById('clock').textContent = String(uptime);
+      }, 1000);
+
+      function fib(n) {
+        if (n < 2) { return n; }
+        return fib(n - 1) + fib(n - 2);
+      }
+
+      let parts = [];
+      for (let i = 0; i < 12; i = i + 1) {
+        parts.push(fib(i));
+      }
+      document.getElementById('fib').textContent = 'fib(0..11) = ' + parts.join(', ');
+
+      console.log('demo ready');
+    </script>
+    """
+    if js_enabled:
+        notice = ('<p class="muted">JavaScript is <strong>on</strong> for this page.</p>')
+    else:
+        notice = ('<div class="card"><p class="warn">JavaScript is off, so nothing on this '
+                  'page will react.</p><p><a class="btn" href="surfgambit://settings">'
+                  'Open settings &rarr; enable JavaScript &rarr; reload</a></p></div>')
+    return _document("SurfScript demo", body.replace("{notice}", notice),
+                     extra_css=(".hl { background:#fff3bf; border-color:#e0b400; color:#111111; }"
+                                " .hl code { color:#111111; }"))

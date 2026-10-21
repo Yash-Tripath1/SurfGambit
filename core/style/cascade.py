@@ -27,9 +27,8 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .. import values
-from ..dom.tree import HTMLNode, iter_elements
+from ..dom.tree import HTMLNode
 from .css import Rule, RuleIndex, Stylesheet, media_matches, parse_stylesheet
-from .selectors import parse_selector
 
 __all__ = [
     "compute_styles",

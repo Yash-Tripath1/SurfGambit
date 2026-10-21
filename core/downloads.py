@@ -20,7 +20,7 @@ import time
 import urllib.parse
 from typing import Callable, Dict, List, Optional
 
-from core.net.client import NetworkError
+from core.net.client import Cancelled, NetworkError
 
 __all__ = ["sanitise_filename", "unique_path", "Download", "DownloadManager"]
 
@@ -95,7 +95,8 @@ def filename_from_headers(headers: Dict[str, str], url: str) -> str:
 
 
 class Download:
-    __slots__ = ("url", "path", "filename", "bytes_done", "size", "status", "error")
+    __slots__ = ("url", "path", "filename", "bytes_done", "size", "status",
+                 "error", "cancel_event")
 
     def __init__(self, url: str, path: str) -> None:
         self.url = url
@@ -105,6 +106,18 @@ class Download:
         self.size = 0
         self.status = "queued"
         self.error = ""
+        self.cancel_event = threading.Event()
+
+    @property
+    def progress(self) -> float:
+        """0..1, or -1 when the server did not send a Content-Length."""
+        if self.size <= 0:
+            return -1.0
+        return max(0.0, min(1.0, self.bytes_done / self.size))
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
+        self.status = "cancelling"
 
     def __repr__(self) -> str:
         return f"Download({self.filename!r}, {self.status})"
@@ -130,6 +143,13 @@ class DownloadManager:
     def is_active(self, path: str) -> bool:
         with self._lock:
             return path in self._active
+
+    def active(self) -> List[Download]:
+        with self._lock:
+            return list(self._active.values())
+
+    def cancel(self, download: Download) -> None:
+        download.cancel()
 
     def start(self, url: str, directory: str, referer: str = "",
               filename: Optional[str] = None,
@@ -166,11 +186,21 @@ class DownloadManager:
             try:
                 size = self.client.download(
                     download.url, download.path, referer=referer,
-                    progress=lambda done, d=download: self._progress(d, done),
+                    progress=lambda done, total, d=download: self._progress(d, done, total),
+                    cancel=download.cancel_event,
                 )
                 download.size = size
                 download.bytes_done = size
                 download.status = "complete"
+            except Cancelled:
+                download.status = "cancelled"
+                download.error = ""
+                try:
+                    partial = download.path + ".part"
+                    if os.path.exists(partial):
+                        os.remove(partial)
+                except OSError:
+                    pass
             except (NetworkError, OSError, RuntimeError) as exc:
                 download.status = "failed"
                 download.error = str(exc)
@@ -191,6 +221,8 @@ class DownloadManager:
                 )
                 self._notify(download)
 
-    def _progress(self, download: Download, done: int) -> None:
+    def _progress(self, download: Download, done: int, total: int = 0) -> None:
         download.bytes_done = done
+        if total:
+            download.size = total
         self._notify(download)

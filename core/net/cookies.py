@@ -22,7 +22,7 @@ import os
 import threading
 import time
 import urllib.parse
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 __all__ = ["Cookie", "CookieJar"]
 
@@ -192,7 +192,6 @@ class CookieJar:
             return None
         path = parts.path or "/"
         secure = parts.scheme == "https"
-        now = time.time()
         with self._lock:
             matching = [c for c in self._cookies if c.matches(host, path, secure)]
             matching.sort(key=lambda c: (-len(c.path), c.creation))

@@ -15,9 +15,8 @@ Everything here is iterative; no recursion over user content.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-from ..dom.tree import HTMLNode
 from .box import LayoutBox, InlineItem, Line, resolve_length
 from .text import FontSpec, TextMeasurer
 

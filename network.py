@@ -13,7 +13,6 @@ fakes still intercept requests.
 from __future__ import annotations
 
 import json
-import os
 import socket  # noqa: F401  (re-exported: callers patch network.socket.socket)
 from typing import Dict, Optional
 

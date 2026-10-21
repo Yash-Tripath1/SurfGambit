@@ -22,12 +22,17 @@ import os
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.parse
 import zlib
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from collections import deque
+from typing import Callable, Dict, List, Optional, Tuple
 
-__all__ = ["HTTPClient", "Response", "NetworkError", "DEFAULT_USER_AGENT"]
+from core.net.cache import HTTPCache
+
+__all__ = ["HTTPClient", "Response", "NetworkError", "Cancelled",
+           "DEFAULT_USER_AGENT", "RequestRecord"]
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -40,6 +45,18 @@ REDIRECT_CODES = {301, 302, 303, 307, 308}
 _CHARSET_RE = re.compile(rb"""charset\s*=\s*["']?([a-zA-Z0-9_\-]+)""", re.I)
 
 
+def _format_size(count: int) -> str:
+    if count >= 1024 * 1024:
+        return f"{count / (1024 * 1024):.1f} MB"
+    if count >= 1024:
+        return f"{count / 1024:.1f} KB"
+    return f"{count} B"
+
+
+class Cancelled(Exception):
+    """Raised internally when a download is cancelled."""
+
+
 class NetworkError(Exception):
     """Any transport-level failure, with a message fit for a human."""
 
@@ -49,13 +66,36 @@ class NetworkError(Exception):
         self.cause = cause
 
 
+class RequestRecord:
+    """One line in the devtools network panel."""
+
+    __slots__ = ("method", "url", "status", "ms", "bytes", "cached", "ok", "error")
+
+    def __init__(self, method: str, url: str, status: int, ms: float,
+                 size: int, cached: bool = False, error: str = "") -> None:
+        self.method = method
+        self.url = url
+        self.status = status
+        self.ms = ms
+        self.bytes = size
+        self.cached = cached
+        self.ok = 200 <= status < 400 and not error
+        self.error = error
+
+    def as_row(self) -> str:
+        state = "cache" if self.cached else (self.error or str(self.status))
+        return (f"{self.method:<4} {state:<6} {self.ms:7.0f}ms "
+                f"{_format_size(self.bytes):>9}  {self.url}")
+
+
 class Response:
     __slots__ = ("status", "reason", "headers", "raw_headers", "body", "url",
-                 "truncated", "elapsed")
+                 "truncated", "elapsed", "from_cache")
 
     def __init__(self, status: int, reason: str, headers: Dict[str, str],
                  raw_headers: List[Tuple[str, str]], body: bytes, url: str,
-                 truncated: bool = False, elapsed: float = 0.0) -> None:
+                 truncated: bool = False, elapsed: float = 0.0,
+                 from_cache: bool = False) -> None:
         self.status = status
         self.reason = reason
         self.headers = headers
@@ -64,6 +104,7 @@ class Response:
         self.url = url
         self.truncated = truncated
         self.elapsed = elapsed
+        self.from_cache = from_cache
 
     # -- convenience ------------------------------------------------------
     @property
@@ -157,6 +198,10 @@ class HTTPClient:
         self.max_redirects = max_redirects
         self._ssl_context: Optional[ssl.SSLContext] = None
         self.last_error: Optional[str] = None
+        self.cache: Optional[HTTPCache] = None
+        self.log: "deque[RequestRecord]" = deque(maxlen=300)
+        self._log_lock = threading.Lock()
+        self.bytes_downloaded = 0
 
     # -- TLS --------------------------------------------------------------
     def _context(self) -> ssl.SSLContext:
@@ -179,12 +224,26 @@ class HTTPClient:
 
     # -- public API -------------------------------------------------------
     def get(self, url: str, headers: Optional[Dict[str, str]] = None,
-            referer: str = "") -> Response:
-        return self.request("GET", url, headers=headers, referer=referer)
+            referer: str = "", force_refresh: bool = False) -> Response:
+        return self.request("GET", url, headers=headers, referer=referer,
+                            force_refresh=force_refresh)
 
     def post(self, url: str, data=None, headers: Optional[Dict[str, str]] = None,
              referer: str = "") -> Response:
         return self.request("POST", url, data=data, headers=headers, referer=referer)
+
+    def record(self, item: RequestRecord) -> None:
+        with self._log_lock:
+            self.log.append(item)
+
+    def log_text(self) -> str:
+        with self._log_lock:
+            items = list(self.log)
+        if not items:
+            return "No requests yet."
+        lines = ["METHOD STATE     TIME        SIZE  URL"]
+        lines.extend(item.as_row() for item in items)
+        return "\n".join(lines)
 
     def request(
         self,
@@ -193,6 +252,7 @@ class HTTPClient:
         headers: Optional[Dict[str, str]] = None,
         data=None,
         referer: str = "",
+        force_refresh: bool = False,
     ) -> Response:
         method = method.upper()
         started = time.time()
@@ -202,10 +262,46 @@ class HTTPClient:
         if data is not None and not body and isinstance(data, dict):
             body, content_type = _multipart(data)
 
+        # -- cache lookup ------------------------------------------------
+        cache_entry = None
+        if method == "GET" and self.cache is not None and not force_refresh:
+            cache_entry = self.cache.lookup(url)
+            if cache_entry is not None and cache_entry.is_fresh():
+                self.record(RequestRecord("GET", url, cache_entry.status,
+                                          (time.time() - started) * 1000,
+                                          cache_entry.size, cached=True))
+                return Response(cache_entry.status, cache_entry.reason,
+                                dict(cache_entry.headers),
+                                [tuple(pair) for pair in cache_entry.raw_headers],
+                                cache_entry.body, url, from_cache=True)
+        conditional = cache_entry.conditional_headers() if cache_entry is not None else {}
+
         for hop in range(self.max_redirects + 1):
-            response = self._single_request(
-                method, current_url, headers, body, content_type, referer
-            )
+            hop_headers = dict(headers or {})
+            if hop == 0 and conditional:
+                hop_headers.update(conditional)
+
+            try:
+                response = self._single_request(
+                    method, current_url, hop_headers or None, body, content_type, referer
+                )
+            except NetworkError as exc:
+                self.record(RequestRecord(method, current_url, 0,
+                                          (time.time() - started) * 1000, 0,
+                                          error=str(exc)[:40]))
+                raise
+
+            # -- 304 -> serve the copy we already have -------------------
+            if response.status == 304 and cache_entry is not None:
+                self.cache.note_revalidated(cache_entry, response.headers,
+                                            response.raw_headers)
+                self.record(RequestRecord("GET", current_url, 304,
+                                          (time.time() - started) * 1000,
+                                          cache_entry.size, cached=True))
+                return Response(cache_entry.status, cache_entry.reason,
+                                dict(cache_entry.headers),
+                                [tuple(pair) for pair in cache_entry.raw_headers],
+                                cache_entry.body, current_url, from_cache=True)
 
             if response.status in REDIRECT_CODES:
                 location = response.header("location")
@@ -227,6 +323,16 @@ class HTTPClient:
 
             response.elapsed = time.time() - started
             response.url = current_url
+            self.bytes_downloaded += len(response.body)
+            self.record(RequestRecord(method, current_url, response.status,
+                                      response.elapsed * 1000, len(response.body)))
+
+            # -- store fresh copies --------------------------------------
+            if (method == "GET" and self.cache is not None
+                    and response.status == 200 and not response.truncated):
+                self.cache.store(current_url, response.status, response.reason,
+                                 response.headers, [list(p) for p in response.raw_headers],
+                                 response.body)
             return response
 
         raise NetworkError(f"Too many redirects (>{self.max_redirects})", url)
@@ -322,7 +428,8 @@ class HTTPClient:
         return head.encode("latin-1", errors="replace") + (body or b"")
 
     # -- response reading -------------------------------------------------
-    def _read_response(self, sock, url: str) -> Response:
+    def _read_head(self, sock, url: str):
+        """Read status line + headers. Returns (status, reason, headers, raw, rest)."""
         buffer = bytearray()
         header_end = -1
 
@@ -385,6 +492,12 @@ class HTTPClient:
                 self.cookies.store_from_headers(url, raw_headers)
             except Exception:
                 pass
+
+        return status, reason, headers, raw_headers, bytes(body_bytes)
+
+    def _read_response(self, sock, url: str) -> Response:
+        status, reason, headers, raw_headers, rest = self._read_head(sock, url)
+        body_bytes = bytearray(rest)
 
         if status in (204, 304):
             return Response(status, reason, headers, raw_headers, b"", url)
@@ -506,18 +619,158 @@ class HTTPClient:
                 idx += 2
 
     # -- downloads --------------------------------------------------------
+    def stream(self, url: str, sink, referer: str = "",
+               progress: Optional[Callable[[int, int], None]] = None,
+               cancel: Optional[threading.Event] = None,
+               max_bytes: Optional[int] = None) -> Tuple[int, Dict[str, str]]:
+        """GET `url` and write the body to `sink` as it arrives.
+
+        Returns (bytes_written, response_headers). The socket is read in 64 KiB
+        chunks, so memory use is flat regardless of file size, and `cancel`
+        (a `threading.Event`) is polled between chunks.
+        """
+        current = url
+        started = time.time()
+        for hop in range(self.max_redirects + 1):
+            parts = urllib.parse.urlsplit(current)
+            if parts.scheme not in ("http", "https"):
+                raise NetworkError(f"Unsupported URL scheme {parts.scheme!r}", current)
+            host = parts.hostname
+            if not host:
+                raise NetworkError(f"Invalid URL (no host): {current}", current)
+            port = parts.port or (443 if parts.scheme == "https" else 80)
+            path = parts.path or "/"
+            if parts.query:
+                path += "?" + parts.query
+            path = urllib.parse.quote(path, safe="/?&=%:+,;@!$'()*~#[]")
+            host_header = host if parts.port in (None, 443, 80) else f"{host}:{port}"
+
+            request_headers = {
+                "Host": host_header,
+                "User-Agent": self.user_agent,
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+                "Connection": "close",
+            }
+            if referer:
+                request_headers["Referer"] = referer
+            if self.cookies is not None:
+                try:
+                    cookie_header = self.cookies.header_for(current)
+                except Exception:
+                    cookie_header = None
+                if cookie_header:
+                    request_headers["Cookie"] = cookie_header
+
+            try:
+                sock = socket.create_connection((host, port), timeout=self.connect_timeout)
+            except socket.timeout:
+                raise NetworkError(f"Timed out connecting to {host}:{port}", current)
+            except socket.gaierror as exc:
+                raise NetworkError(f"Could not resolve {host}", current, exc)
+            except OSError as exc:
+                raise NetworkError(f"Connection to {host}:{port} failed: {exc}",
+                                   current, exc)
+
+            try:
+                if parts.scheme == "https":
+                    try:
+                        sock = self._context().wrap_socket(sock, server_hostname=host)
+                    except ssl.SSLCertVerificationError as exc:
+                        raise NetworkError(
+                            f"TLS certificate rejected for {host}: {exc.verify_message}",
+                            current, exc)
+                sock.settimeout(self.read_timeout)
+                sock.sendall(self._build_request("GET", path, request_headers, b""))
+                status, reason, headers, raw_headers, rest = self._read_head(sock, current)
+
+                if status in REDIRECT_CODES and headers.get("location"):
+                    next_url = urllib.parse.urljoin(current, headers["location"])
+                    if not next_url.startswith(("http://", "https://")):
+                        raise NetworkError(f"Refused redirect to {next_url!r}", current)
+                    referer = current
+                    current = next_url
+                    continue
+
+                if status != 200:
+                    raise NetworkError(f"HTTP {status} {reason} for {url}", current)
+
+                total_header = headers.get("content-length", "")
+                total = int(total_header) if total_header.isdigit() else 0
+                chunked = "chunked" in headers.get("transfer-encoding", "").lower()
+                written = 0
+
+                def emit(payload: bytes) -> None:
+                    nonlocal written
+                    if cancel is not None and cancel.is_set():
+                        raise Cancelled()
+                    sink.write(payload)
+                    written += len(payload)
+                    if max_bytes is not None and written > max_bytes:
+                        raise NetworkError(f"Response larger than {max_bytes} bytes", current)
+                    if progress is not None:
+                        progress(written, total)
+
+                if chunked:
+                    buffer = bytearray(rest)
+                    while True:
+                        while b"\r\n" not in buffer:
+                            chunk = sock.recv(65536)
+                            if not chunk:
+                                raise NetworkError("connection closed mid-chunk", current)
+                            buffer.extend(chunk)
+                        line, _, remainder = bytes(buffer).partition(b"\r\n")
+                        buffer = bytearray(remainder)
+                        try:
+                            size = int(line.split(b";")[0].strip() or b"0", 16)
+                        except ValueError:
+                            raise NetworkError("malformed chunked encoding", current)
+                        if size == 0:
+                            break
+                        while len(buffer) < size + 2:
+                            chunk = sock.recv(65536)
+                            if not chunk:
+                                raise NetworkError("connection closed mid-chunk", current)
+                            buffer.extend(chunk)
+                        emit(bytes(buffer[:size]))
+                        del buffer[:size + 2]
+                else:
+                    if rest:
+                        emit(rest)
+                    while True:
+                        if total and written >= total:
+                            break
+                        chunk = sock.recv(65536)
+                        if not chunk:
+                            break
+                        emit(chunk)
+                    if total and written < total:
+                        raise NetworkError(
+                            f"Connection closed after {written} of {total} bytes", current)
+
+                self.record(RequestRecord("GET", current, status,
+                                          (time.time() - started) * 1000, written))
+                self.bytes_downloaded += written
+                return written, headers
+            except socket.timeout:
+                raise NetworkError(f"Timed out downloading {url}", current)
+            finally:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+        raise NetworkError(f"Too many redirects (>{self.max_redirects})", url)
+
     def download(self, url: str, destination: str, referer: str = "",
-                 progress: Optional[Callable[[int], None]] = None) -> int:
+                 progress: Optional[Callable[[int, int], None]] = None,
+                 cancel: Optional[threading.Event] = None) -> int:
         """Stream a URL straight to disk (no full-body buffering)."""
-        response = self.request("GET", url, referer=referer)
-        if not response.ok:
-            raise NetworkError(f"HTTP {response.status} for {url}", url)
-        total = 0
         tmp = destination + ".part"
         with open(tmp, "wb") as handle:
-            handle.write(response.body)
-            total += len(response.body)
-            if progress:
-                progress(total)
+            written, _headers = self.stream(url, handle, referer=referer,
+                                            progress=progress, cancel=cancel)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, destination)
-        return total
+        return written

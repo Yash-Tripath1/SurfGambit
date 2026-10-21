@@ -14,9 +14,9 @@ Turns tokens into a DOM with the tree-shaping rules that matter for layout:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from .tokenizer import RCDATA_ELEMENTS, RAWTEXT_ELEMENTS, VOID_ELEMENTS, Token, Tokenizer
+from .tokenizer import VOID_ELEMENTS, Token, Tokenizer
 from .tree import HTMLNode
 
 __all__ = ["parse", "parse_fragment", "ParseResult"]

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 __all__ = [
     "SEARCH_ENGINES", "search_url", "normalise_input", "looks_like_url",

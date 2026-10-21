@@ -26,7 +26,6 @@ from core.dom import parse
 from core.dom.tree import HTMLNode
 from core.layout.block import apply_list_markers, compute_layout
 from core.layout.box import LayoutBox, build_layout_tree
-from core.layout.text import TextMeasurer
 from core.style import parse_stylesheet
 from core.style.cascade import compute_styles
 from ui import pages
@@ -95,7 +94,8 @@ class BrowserTab(tk.Frame):
         super().__init__(parent, bg="#ffffff")
         self.app = app
         self.canvas = tk.Canvas(self, bg="#ffffff", highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical",
+                                       command=self._on_scrollbar)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -121,6 +121,13 @@ class BrowserTab(tk.Frame):
         self.form_entries: Dict[HTMLNode, tk.Widget] = {}
 
         self._render_scheduled = False
+        self._viewport_job = None
+        self._drawn_range = (0.0, 0.0)
+        self.script_runtime = None
+        self.script_errors = 0
+        self._widget_pos = {}
+        self._widget_for_node = {}
+        self._timer_job = None
         self._last_width = 0
         self._resize_job = None
         self._game = None
@@ -149,6 +156,8 @@ class BrowserTab(tk.Frame):
         self.canvas.bind("<Button-3>", self._on_context)
         self.canvas.tag_bind("link", "<Enter>", self._on_link_enter)
         self.canvas.tag_bind("link", "<Leave>", self._on_link_leave)
+        for sequence in ("<Prior>", "<Next>", "<Home>", "<End>"):
+            self.canvas.bind(sequence, self._on_page_key)
 
     def _on_wheel(self, event) -> str:
         if getattr(event, "num", None) == 4:
@@ -159,7 +168,43 @@ class BrowserTab(tk.Frame):
             self.canvas.yview_scroll(-3, "units")
         else:
             self.canvas.yview_scroll(3, "units")
+        self._after_scroll()
         return "break"
+
+    def _on_page_key(self, event) -> str:
+        height = max(1, self.canvas.winfo_height() or 600)
+        if event.keysym == "Prior":
+            self.canvas.yview_scroll(-height, "units")
+        elif event.keysym == "Next":
+            self.canvas.yview_scroll(height, "units")
+        elif event.keysym == "Home":
+            self.canvas.yview_moveto(0)
+        else:
+            self.canvas.yview_moveto(1)
+        self._after_scroll()
+        return "break"
+
+    def _on_scrollbar(self, *args) -> None:
+        self.canvas.yview(*args)
+        self._after_scroll()
+
+    def _after_scroll(self) -> None:
+        """Keep Tk widgets glued to the page, and re-cull if we left the band."""
+        self._sync_form_widgets()
+        if self._viewport_job is not None:
+            return
+        self._viewport_job = self.after(30, self._viewport_check)
+
+    def _viewport_check(self) -> None:
+        self._viewport_job = None
+        if self.layout is None:
+            return
+        height = max(1, self.canvas.winfo_height() or 600)
+        top = self.canvas.canvasy(0)
+        bottom = top + height
+        band_top, band_bottom = self._drawn_range
+        if top < band_top + 60 or bottom > band_bottom - 60:
+            self._repaint_viewport()
 
     def _on_configure(self, event) -> None:
         if abs(event.width - self._last_width) < 8:
@@ -250,7 +295,62 @@ class BrowserTab(tk.Frame):
         out.sort(key=lambda w: (round(w[0]), w[1]))
         return [w[2] for w in out]
 
+    def _node_at(self, x: float, y: float):
+        """The DOM node painted under a canvas point, if any."""
+        for canvas_id in reversed(self.canvas.find_overlapping(x, y, x, y)):
+            for tag in self.canvas.gettags(canvas_id):
+                if len(tag) > 1 and tag[0] == "n" and tag[1:].isdigit():
+                    node = self.renderer.node_map.get(int(tag[1:]))
+                    if node is not None:
+                        return node
+        return None
+
+    def _node_has_script_click(self, node: HTMLNode) -> bool:
+        runtime = self.script_runtime
+        if runtime is None or not self.scripts_enabled():
+            return False
+        probe = node
+        while probe is not None:
+            if "onclick" in probe.attributes:
+                return True
+            if runtime.has_listeners(probe, "click"):
+                return True
+            probe = probe.parent
+        return False
+
+    def _dispatch_on(self, node: HTMLNode, fields: Dict[str, object]) -> bool:
+        runtime = self.script_runtime
+        if runtime is None or not self.scripts_enabled():
+            return False
+        try:
+            from core.js.dom_bridge import Event
+
+            event = Event("click", runtime.wrap(node), fields)
+            runtime.dispatch(node, event)
+            if runtime.errors:
+                for error in runtime.errors[-2:]:
+                    self.app.log_console(error, "error")
+                runtime.errors.clear()
+            return bool(event.default_prevented)
+        except Exception as exc:
+            self.app.log_console(f"click handler failed: {exc}", "error")
+            return False
+
+    def _dispatch_click(self, x: float, y: float) -> bool:
+        """Send a click to script listeners. Returns True if it was consumed."""
+        runtime = self.script_runtime
+        if runtime is None or not self.scripts_enabled():
+            return False
+        node = self._node_at(x, y)
+        if node is None:
+            return False
+        return self._dispatch_on(node, {
+            "clientX": x, "clientY": y, "pageX": x, "pageY": y, "button": 0,
+        })
+
     def _click_at(self, x: float, y: float) -> None:
+        if self._dispatch_click(x, y):
+            return
         item = self.canvas.find_overlapping(x, y, x, y)
         for canvas_id in reversed(item):
             tags = self.canvas.gettags(canvas_id)
@@ -282,7 +382,29 @@ class BrowserTab(tk.Frame):
                     except (ValueError, KeyError):
                         href = ""
 
+        node = self._node_at(x, y)
+        image_url = ""
+        probe = node
+        while probe is not None:
+            if probe.tag == "img" and probe.attributes.get("src"):
+                image_url = urllib.parse.urljoin(self.current_url,
+                                                 probe.attributes["src"])
+                break
+            probe = probe.parent
+
         menu = tk.Menu(self, tearoff=0)
+        if image_url:
+            menu.add_command(label="Open image in new tab",
+                             command=lambda: self.app.open_in_new_tab(image_url))
+            menu.add_command(label="Save image as\u2026",
+                             command=lambda: self.app.offer_download(
+                                 image_url, os.path.basename(
+                                     urllib.parse.urlsplit(image_url).path) or "image"))
+            menu.add_separator()
+        if node is not None and self.script_runtime is not None:
+            menu.add_command(label="Inspect element",
+                             command=lambda n=node: self.app.inspect_node(n))
+            menu.add_separator()
         if href:
             target = urllib.parse.urljoin(self.current_url, href)
             menu.add_command(label="Open link",
@@ -349,8 +471,11 @@ class BrowserTab(tk.Frame):
         self.app.set_status(f"Loading {resolved} ...")
         self.app.submit(lambda: self._fetch(generation, resolved))
 
-    def reload(self) -> None:
-        self.load_page(self.current_url, push_history=False)
+    def reload(self, without_scripts: bool = False) -> None:
+        self._skip_scripts = bool(without_scripts)
+        if without_scripts:
+            self.app.set_status("Reloading without scripts\u2026")
+        self.load_page(self.current_url, push_history=False, force=True)
 
     def go_back(self) -> None:
         if not self.back_stack:
@@ -366,7 +491,8 @@ class BrowserTab(tk.Frame):
         self.back_stack.append(self.current_url)
         self.load_page(target, push_history=False)
 
-    def load_page(self, url: str, push_history: bool = True) -> None:
+    def load_page(self, url: str, push_history: bool = True,
+                  force: bool = False) -> None:
         """Load without touching the stacks (used by back/forward/reload)."""
         if url.startswith(INTERNAL_PREFIX):
             self.current_url = url
@@ -377,13 +503,13 @@ class BrowserTab(tk.Frame):
         self.current_url = url
         self.set_loading(True)
         self.app.set_status(f"Loading {url} ...")
-        self.app.submit(lambda: self._fetch(generation, url))
+        self.app.submit(lambda: self._fetch(generation, url, force))
 
     # -- worker ---------------------------------------------------------
-    def _fetch(self, generation: int, url: str) -> None:
+    def _fetch(self, generation: int, url: str, force: bool = False) -> None:
         client = self.app.client
         try:
-            response = client.get(url)
+            response = client.get(url, force_refresh=force)
             if not response.ok:
                 raise RuntimeError(f"HTTP {response.status} {response.reason}")
             if not response.is_html:
@@ -442,7 +568,10 @@ class BrowserTab(tk.Frame):
         settings = self.app.settings
         self.css_sheets = []
 
-        if path == "welcome":
+        if path == "demo":
+            html_text = pages.demo_page(self.scripts_enabled())
+            self.title = "SurfScript demo"
+        elif path == "welcome":
             html_text = pages.welcome_page(
                 self.app.profile_name, self.app.store.load_bookmarks()
             )
@@ -563,14 +692,14 @@ class BrowserTab(tk.Frame):
     def _start_image_search(self, query: str) -> None:
         self.set_loading(True)
         self.app.set_status(f"Searching images for {query!r} ...")
-        generation = self.generation
 
         def work() -> None:
             try:
                 urls = self.app.search_images(query)
                 self.app.ui(lambda: self._finish_image_search(query, urls, ""))
             except Exception as exc:
-                self.app.ui(lambda: self._finish_image_search(query, [], str(exc)))
+                message = str(exc)
+                self.app.ui(lambda: self._finish_image_search(query, [], message))
 
         self.app.submit(work)
 
@@ -608,18 +737,86 @@ class BrowserTab(tk.Frame):
         self.title = document_title(dom) or self.title
         self._run_scripts_if_enabled(dom)
         self.relayout()
+        self._schedule_timers()
         self._load_images()
         self.app.update_chrome(self)
         self.app.refresh_devtools(self)
 
+    def scripts_enabled(self) -> bool:
+        return str(self.app.settings.get("javascript", "off")).lower() == "on"
+
     def _run_scripts_if_enabled(self, dom: HTMLNode) -> None:
-        if self.app.settings.get("javascript", "off") != "on":
+        """Create the per-document JS runtime and execute <script> blocks."""
+        self._cancel_timers()
+        self.script_runtime = None
+        self.script_errors = 0
+        if getattr(self, "_skip_scripts", False):
+            self._skip_scripts = False
+            self.app.set_status("Scripts skipped for this load")
+            return
+        if not self.scripts_enabled():
             return
         try:
-            from core.js import surfscript
-            surfscript.run_document(dom, self.current_url)
+            from core.js.dom_bridge import DocumentRuntime
+
+            runtime = DocumentRuntime(
+                dom, base_url=self.current_url,
+                on_mutate=self._on_script_mutation,
+                on_console=self._on_script_console,
+            )
+            runtime.viewport = (max(320, self.canvas.winfo_width() or 1024),
+                                max(240, self.canvas.winfo_height() or 768))
+            self.script_runtime = runtime
+            errors = runtime.run_scripts()
+            self.script_errors = len(errors)
+            for error in errors[:4]:
+                self.app.log_console(error, "error")
+            if errors:
+                self.app.set_status(
+                    f"{len(errors)} script error(s) — press F12 for details")
         except Exception as exc:
-            self.app.set_status(f"Script error: {exc}")
+            traceback.print_exc()
+            self.app.log_console(f"script runtime failure: {exc}", "error")
+
+    def _on_script_mutation(self) -> None:
+        """A script changed the DOM: relayout once, after the batch settles."""
+        if getattr(self, "_mutation_job", None) is not None:
+            return
+        self._mutation_job = self.after(60, self._apply_script_mutation)
+
+    def _apply_script_mutation(self) -> None:
+        self._mutation_job = None
+        if self.winfo_exists() and self.dom is not None:
+            self.schedule_paint()
+
+    def _on_script_console(self, level: str, text: str) -> None:
+        self.app.log_console(text, level)
+
+    def _cancel_timers(self) -> None:
+        if self._timer_job is not None:
+            try:
+                self.after_cancel(self._timer_job)
+            except Exception:
+                pass
+            self._timer_job = None
+
+    def _schedule_timers(self) -> None:
+        runtime = self.script_runtime
+        if runtime is None or not self.winfo_exists():
+            return
+        delay = runtime.next_timer_delay()
+        if delay is None:
+            return
+        self._timer_job = self.after(int(delay * 1000) + 5, self._run_timers)
+
+    def _run_timers(self) -> None:
+        self._timer_job = None
+        runtime = self.script_runtime
+        if runtime is None or not self.winfo_exists():
+            return
+        if runtime.run_due_timers():
+            self.schedule_paint()
+        self._schedule_timers()
 
     # ------------------------------------------------------------------
     # Layout + paint
@@ -645,7 +842,7 @@ class BrowserTab(tk.Frame):
             apply_list_markers(self.layout)
             compute_layout(self.layout, 0, 0, width, self.app.measurer)
             self._ensure_root_covers_content()
-            self._paint(width)
+            self._paint(width, keep_widgets=False)
         except RecursionError:
             self.app.set_status("This page is nested too deeply to lay out.")
         except Exception:
@@ -680,14 +877,23 @@ class BrowserTab(tk.Frame):
                 return str(colour)
         return None
 
-    def _paint(self, width: int) -> None:
-        for widget in self.form_widgets:
-            try:
-                widget.destroy()
-            except Exception:
-                pass
-        self.form_widgets = []
-        self.form_entries.clear()
+    def _viewport_band(self):
+        """The slice of the page we keep as canvas items (1.75 screens)."""
+        height = max(1, self.canvas.winfo_height() or 800)
+        top = self.canvas.canvasy(0)
+        return (top - height * 0.75, top + height * 1.75)
+
+    def _paint(self, width: int, keep_widgets: bool = False) -> None:
+        if not keep_widgets:
+            for widget in self.form_widgets:
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
+            self.form_widgets = []
+            self.form_entries.clear()
+            self._widget_pos.clear()
+            self._widget_for_node.clear()
 
         if self.layout is None:
             return
@@ -697,16 +903,52 @@ class BrowserTab(tk.Frame):
         except tk.TclError:
             pass
 
+        band = self._viewport_band()
+        self._drawn_range = band
         self.renderer.measurer = self.app.measurer
-        self.renderer.render(self.layout, self.current_url, self.search_term)
+        self.renderer.render(self.layout, self.current_url, self.search_term,
+                             viewport=band)
         self.search_hits = self.renderer.search_hits
         total = int(self.layout.height) + 40
         self.canvas.config(scrollregion=(0, 0, width, total))
+        self._sync_form_widgets()
 
         if self.search_term:
             self.app.set_status(
                 f"{self.search_hits} match(es) for {self.search_term!r}"
             )
+
+    def _repaint_viewport(self) -> None:
+        """Re-render the visible band without redoing layout."""
+        if self.layout is None or not self.winfo_exists():
+            return
+        width = max(320, self.canvas.winfo_width() or 0) or 320
+        try:
+            self._paint(width, keep_widgets=True)
+        except Exception:
+            traceback.print_exc()
+
+    def _sync_form_widgets(self) -> None:
+        """Place live Tk form widgets at their page position minus scroll."""
+        if not self._widget_pos:
+            return
+        offset = self.canvas.canvasy(0)
+        height = self.canvas.winfo_height() or 600
+        for widget, (x, y, w, h) in list(self._widget_pos.items()):
+            try:
+                if not widget.winfo_exists():
+                    self._widget_pos.pop(widget, None)
+                    continue
+                # Off-screen widgets stay alive (so typing is never lost)
+                # but are moved out of the viewport.
+                y_view = y - offset
+                if y_view + h < -80 or y_view > height + 80:
+                    widget.place_forget()
+                else:
+                    widget.place(x=x, y=y_view, width=max(1, int(w)),
+                                 height=max(1, int(h)))
+            except tk.TclError:
+                self._widget_pos.pop(widget, None)
 
     def schedule_paint(self) -> None:
         """Coalesce repeated repaint requests (e.g. many images finishing)."""
@@ -783,6 +1025,13 @@ class BrowserTab(tk.Frame):
         if tag == "input" and itype in ("hidden",):
             return True
 
+        # Scrolling repaints the page many times a second: never rebuild a
+        # widget that already exists, or typed text would be lost mid-scroll.
+        existing = self._widget_for_node.get(node)
+        if existing is not None and existing.winfo_exists():
+            self._position_widget(existing, x, y, w, h)
+            return True
+
         widget: Optional[tk.Widget] = None
         if tag == "input" and itype in ("text", "search", "email", "url", "tel", "number", "password"):
             widget = tk.Entry(self.canvas, relief="solid", bd=1, bg="#ffffff",
@@ -811,20 +1060,23 @@ class BrowserTab(tk.Frame):
                                   state="readonly")
             self.form_entries[node] = variable  # type: ignore[assignment]
         elif tag in ("button", "input") and (tag == "button" or itype in ("submit", "button", "reset")):
+            if self._node_has_script_click(node):
+                # Painted button: the canvas click will reach the script.
+                return False
             label = (node.attributes.get("value")
                      or "".join(c.text for c in node.children).strip()
                      or "Submit")
             widget = tk.Button(self.canvas, text=label, relief="raised", bd=1,
                                bg="#e8e8e8", fg="#111111", activebackground="#d5d5d5",
                                cursor="hand2",
-                               command=lambda n=node: self.submit_form(n))
+                               command=lambda n=node: self._activate_button(n))
         else:
             return False
 
         if widget is None:
             return False
-        widget.place(x=x, y=y, width=max(1, int(w)), height=max(1, int(h)))
-        self.form_widgets.append(widget)
+        self._widget_for_node[node] = widget
+        self._position_widget(widget, x, y, w, h)
         if node not in self.form_entries:
             self.form_entries[node] = widget
         if isinstance(widget, (tk.Entry, tk.Text)):
@@ -832,6 +1084,31 @@ class BrowserTab(tk.Frame):
         if isinstance(widget, ttk.Combobox):
             widget.bind("<<ComboboxSelected>>", lambda e, n=node: None)
         return True
+
+    def _activate_button(self, node: HTMLNode) -> None:
+        if self._dispatch_on(node, {"button": 0}):
+            return
+        self.submit_form(node)
+
+    def _position_widget(self, widget, x: float, y: float, w: float, h: float) -> None:
+        self._widget_pos[widget] = (x, y, w, h)
+        if widget not in self.form_widgets:
+            self.form_widgets.append(widget)
+        offset = self.canvas.canvasy(0)
+        height = self.canvas.winfo_height() or 600
+        try:
+            y_view = y - offset
+            if y_view + h < -80 or y_view > height + 80:
+                widget.place_forget()
+            else:
+                widget.place(x=x, y=y_view, width=max(1, int(w)),
+                             height=max(1, int(h)))
+        except tk.TclError:
+            pass
+
+    def node_summary(self, node: HTMLNode) -> str:
+        attrs = " ".join(f'{k}="{v}"' for k, v in list(node.attributes.items())[:6])
+        return f"<{node.tag}{(' ' + attrs) if attrs else ''}>"
 
     def submit_form(self, trigger: HTMLNode) -> None:
         form = trigger
@@ -918,7 +1195,8 @@ class BrowserTab(tk.Frame):
                         continue
                 self.app.ui(lambda: self._on_loaded(generation, final_url, html_text, sources))
             except Exception as exc:
-                self.app.ui(lambda: self._on_failed(generation, target, str(exc)))
+                message = str(exc)
+                self.app.ui(lambda: self._on_failed(generation, target, message))
 
         self.app.submit(work)
 
@@ -959,6 +1237,8 @@ class BrowserTab(tk.Frame):
             self._game = None
 
     def destroy(self) -> None:
+        self._cancel_timers()
+        self.script_runtime = None
         self.stop_game()
         self.generation += 1
         super().destroy()

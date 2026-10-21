@@ -15,9 +15,8 @@ Rules implemented:
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 
-from ..dom.tree import HTMLNode
 from ..values import Length
 from .box import LayoutBox, resolve_length
 from .inline import layout_inline
@@ -131,7 +130,6 @@ def _layout_block(box: LayoutBox, x: float, y: float, available_width: float,
     style = box.style
 
     # `margin: auto` centring for fixed-width blocks.
-    explicit = resolve_length(style.get("width"), available_width)
     auto_left = _is_auto(style.get("margin-left"))
     auto_right = _is_auto(style.get("margin-right"))
     if auto_left:
@@ -277,9 +275,9 @@ def _layout_flex_container(box: LayoutBox, x: float, y: float,
         read_box_model(box, available_width)
         from .inline import intrinsic_widths
         try:
-            min_w, max_w = intrinsic_widths(box, measurer)
+            _, max_w = intrinsic_widths(box, measurer)
         except Exception:
-            min_w, max_w = 0.0, available_width
+            max_w = available_width
         box.x = x + box.margin_left
         box.y = y
         box.width = max(1.0, min(max_w, available_width)) + (

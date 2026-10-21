@@ -24,7 +24,7 @@ the correct fallback behaviour, unlike matching it always.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 __all__ = ["Selector", "parse_selector", "parse_selector_list", "matches"]
 

@@ -13,7 +13,7 @@ HTML):
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from typing import List
 
 from .box import LayoutBox, resolve_length
 from .inline import intrinsic_widths

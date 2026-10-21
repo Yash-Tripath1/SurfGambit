@@ -17,17 +17,17 @@ import os
 import queue
 import tkinter as tk
 import traceback
-import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional
 
 from core.accounts import AccountStore
 from core.downloads import DownloadManager
 from core.layout.text import TextMeasurer
-from core.net.client import HTTPClient, NetworkError
+from core.net.cache import HTTPCache
+from core.net.client import HTTPClient
 from core.net.cookies import CookieJar
-from core.search import (SEARCH_ENGINES, USER_AGENTS, fetch_image_urls,
-                         normalise_input)
+from core.search import USER_AGENTS, fetch_image_urls, normalise_input
 from core.storage import data_path
 from core.store import Store
 from ui import pages
@@ -35,7 +35,7 @@ from ui.mascot import Mascot
 from ui.tab import BrowserTab
 
 APP_NAME = "SurfGambit"
-VERSION = "2.0"
+VERSION = "3.0"
 
 BG = "#1b1b1f"
 BG_ALT = "#24242a"
@@ -56,6 +56,9 @@ class BrowserApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._queue: "queue.Queue[Callable[[], None]]" = queue.Queue()
+        # A bounded pool beats one-thread-per-request: a page with 60 images
+        # used to spawn 60 threads and hammer the network.
+        self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="surf")
         self._closing = False
         self.ctrl_down = False
         self.last_source = ""
@@ -63,8 +66,12 @@ class BrowserApp(tk.Tk):
         self._status_override: Optional[str] = None
         self._devtools: Optional[tk.Toplevel] = None
         self._devtools_text: Dict[str, tk.Text] = {}
+        self._console_entry: Optional[ttk.Entry] = None
+        self._downloads_window: Optional[tk.Toplevel] = None
+        self._downloads_tree = None
 
         self.store = Store()
+        self.cache = HTTPCache(data_path(os.path.join("cache", "http")))
         self.settings: Dict[str, Any] = self.store.load_settings()
         self.profile_name = self.settings.get("profile") or None
 
@@ -75,6 +82,7 @@ class BrowserApp(tk.Tk):
                                        USER_AGENTS["Chrome"]),
             verify_tls=self.settings.get("verify_tls", "on") == "on",
         )
+        self.client.cache = self.cache
         self.accounts = AccountStore(data_path("accounts.json"))
         self.measurer = TextMeasurer()
         self.downloads = DownloadManager(self.store, self.client,
@@ -179,6 +187,9 @@ class BrowserApp(tk.Tk):
         view_menu.add_command(label="Reset zoom", accelerator="Ctrl+0",
                               command=lambda: self.set_zoom(1.0))
         view_menu.add_separator()
+        view_menu.add_command(label="Reload without scripts",
+                              accelerator="Ctrl+Shift+R",
+                              command=lambda: self.current_tab().reload(without_scripts=True))
         view_menu.add_command(label="View source", accelerator="Ctrl+U",
                               command=self.view_source)
         view_menu.add_command(label="Developer tools", accelerator="F12",
@@ -197,6 +208,8 @@ class BrowserApp(tk.Tk):
                               command=lambda: self.current_tab().navigate("surfgambit://history"))
         book_menu.add_command(label="Downloads",
                               command=lambda: self.current_tab().navigate("surfgambit://downloads"))
+        book_menu.add_command(label="Download manager...", accelerator="Ctrl+J",
+                              command=self.show_downloads)
         menubar.add_cascade(label="Bookmarks", menu=book_menu)
 
         tools_menu = tk.Menu(menubar, tearoff=0, bg=BG_ALT, fg=FG,
@@ -284,6 +297,8 @@ class BrowserApp(tk.Tk):
         bar.pack(side="bottom", fill="x")
         self.status_label = ttk.Label(bar, text="Ready", style="Status.TLabel")
         self.status_label.pack(side="left")
+        self.loading_bar = ttk.Progressbar(bar, mode="indeterminate", length=110)
+        self._loading_shown = False
         self.right_label = ttk.Label(bar, text="", style="Status.TLabel")
         self.right_label.pack(side="right")
 
@@ -292,8 +307,10 @@ class BrowserApp(tk.Tk):
             "<Control-t>": lambda e: self.add_tab(),
             "<Control-w>": lambda e: self.close_current_tab(),
             "<Control-l>": lambda e: self.focus_address(),
+            "<Control-j>": lambda e: self.show_downloads(),
             "<Control-f>": lambda e: self.focus_find(),
             "<Control-r>": lambda e: self.current_tab().reload(),
+            "<Control-Shift-r>": lambda e: self.current_tab().reload(without_scripts=True),
             "<F5>": lambda e: self.current_tab().reload(),
             "<Control-u>": lambda e: self.view_source(),
             "<Control-d>": lambda e: self.bookmark_current(),
@@ -418,8 +435,21 @@ class BrowserApp(tk.Tk):
         tab = self.current_tab()
         loading = bool(tab and tab.is_loading)
         self.reload_btn.configure(text="\u2715" if loading else "\u27f3")
-        if loading:
+        if loading and not self._loading_shown:
+            self._loading_shown = True
+            self.loading_bar.pack(side="left", padx=10)
+            try:
+                self.loading_bar.start(14)
+            except tk.TclError:
+                pass
             self.status_label.configure(text="Loading\u2026")
+        elif not loading and self._loading_shown:
+            self._loading_shown = False
+            try:
+                self.loading_bar.stop()
+            except tk.TclError:
+                pass
+            self.loading_bar.pack_forget()
 
     def set_status(self, text: str, timeout_ms: int = 0) -> None:
         self.status_label.configure(text=text)
@@ -589,6 +619,77 @@ class BrowserApp(tk.Tk):
         if tab is not None:
             tab._open_internal("surfgambit://downloads")
 
+    def show_downloads(self) -> None:
+        """A live view of the queue: progress, size and a cancel button."""
+        if self._downloads_window is not None and self._downloads_window.winfo_exists():
+            self._downloads_window.lift()
+            self._refresh_downloads_window()
+            return
+        window = tk.Toplevel(self)
+        window.title("Downloads")
+        window.geometry("680x300")
+        window.configure(bg=BG)
+        self._downloads_window = window
+
+        columns = ("name", "size", "progress", "status")
+        tree = ttk.Treeview(window, columns=columns, show="headings", height=9)
+        for column, title, width in (("name", "File", 240), ("size", "Size", 90),
+                                     ("progress", "Progress", 90),
+                                     ("status", "Status", 220)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        self._downloads_tree = tree
+
+        row = ttk.Frame(window, padding=(8, 0, 8, 8))
+        row.pack(fill="x")
+        ttk.Button(row, text="Cancel selected",
+                   command=self._cancel_selected_download).pack(side="left")
+        ttk.Button(row, text="Open folder",
+                   command=self._open_downloads_folder).pack(side="left", padx=6)
+        ttk.Button(row, text="Close", command=window.destroy).pack(side="right")
+        self._refresh_downloads_window()
+
+    def _refresh_downloads_window(self) -> None:
+        tree = self._downloads_tree
+        window = self._downloads_window
+        if tree is None or window is None or not window.winfo_exists():
+            return
+        active = self.downloads.active()
+        existing = {tree.item(item, "values")[0]: item for item in tree.get_children("")}
+        for download in active:
+            percent = download.progress
+            progress_text = f"{percent * 100:.0f}%" if percent >= 0 else "?"
+            values = (download.filename, format_bytes(download.bytes_done),
+                      progress_text, download.status)
+            item = existing.get(download.filename)
+            if item:
+                tree.item(item, values=values)
+            else:
+                tree.insert("", "end", values=values, iid=download.path)
+        for filename, item in existing.items():
+            if all(d.filename != filename for d in active):
+                tree.delete(item)
+        window.after(500, self._refresh_downloads_window)
+
+    def _cancel_selected_download(self) -> None:
+        tree = self._downloads_tree
+        if tree is None:
+            return
+        for item in tree.selection():
+            for download in self.downloads.active():
+                if download.path == item:
+                    self.downloads.cancel(download)
+                    self.set_status(f"Cancelling {download.filename}\u2026")
+
+    def _open_downloads_folder(self) -> None:
+        active = self.downloads.active()
+        folder = os.path.dirname(active[0].path) if active else ""
+        if folder and hasattr(os, "startfile"):
+            os.startfile(folder)          # type: ignore[attr-defined]
+        else:
+            self.set_status(folder or "No active downloads")
+
     def _on_download_update(self, download) -> None:
         if not self.winfo_exists():
             return
@@ -597,8 +698,13 @@ class BrowserApp(tk.Tk):
                             4000)
         elif download.status == "failed":
             self.set_status(f"Download failed: {download.error}", 6000)
+        elif download.status == "cancelled":
+            self.set_status(f"Cancelled {download.filename}", 4000)
         else:
-            self.right_label.configure(text=f"{download.filename}: {download.bytes_done} B")
+            percent = download.progress
+            suffix = f" ({percent * 100:.0f}%)" if percent >= 0 else ""
+            self.right_label.configure(
+                text=f"{download.filename}: {format_bytes(download.bytes_done)}{suffix}")
         tab = self.current_tab()
         if tab is not None and tab.current_url.startswith("surfgambit://downloads"):
             tab._open_internal("surfgambit://downloads")
@@ -657,14 +763,17 @@ class BrowserApp(tk.Tk):
             self._devtools.destroy()
             self._devtools = None
             self._devtools_text.clear()
+            self._console_entry = None
             return
         window = tk.Toplevel(self)
         window.title("SurfGambit developer tools")
-        window.geometry("720x420")
+        window.geometry("820x460")
         window.configure(bg=BG)
         notebook = ttk.Notebook(window)
         notebook.pack(fill="both", expand=True)
-        for name in ("console", "dom", "layout"):
+        self._devtools_notebook = notebook
+
+        for name in ("console", "network", "dom", "layout"):
             frame = ttk.Frame(notebook)
             text = tk.Text(frame, bg="#111114", fg=FG, insertbackground=FG,
                            wrap="none", font=("Courier", 10), relief="flat")
@@ -674,14 +783,90 @@ class BrowserApp(tk.Tk):
             text.pack(side="left", fill="both", expand=True)
             notebook.add(frame, text=name.capitalize())
             self._devtools_text[name] = text
+            if name == "console":
+                entry_row = ttk.Frame(frame)
+                entry_row.pack(side="bottom", fill="x")
+                ttk.Label(entry_row, text="\u203a", style="Status.TLabel").pack(side="left")
+                self._console_entry = ttk.Entry(entry_row)
+                self._console_entry.pack(side="left", fill="x", expand=True, padx=4, pady=4)
+                self._console_entry.bind("<Return>", self._eval_console)
+
         self._devtools = window
         tab = self.current_tab()
         if tab is not None:
             self.refresh_devtools(tab)
+        self._refresh_network_panel()
+
+    def _eval_console(self, _event=None) -> None:
+        """Evaluate an expression in the page's own JS context."""
+        entry = getattr(self, "_console_entry", None)
+        if entry is None:
+            return
+        code = entry.get().strip()
+        if not code:
+            return
+        entry.delete(0, "end")
+        widget = self._devtools_text.get("console")
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.insert("end", f"\u203a {code}\n")
+        tab = self.current_tab()
+        try:
+            from core.js.surfscript import Interpreter, to_string
+
+            interp = tab.script_runtime.interp if (tab and tab.script_runtime) \
+                else Interpreter()
+            widget.insert("end", to_string(interp.evaluate_source(code)) + "\n")
+        except Exception as exc:
+            widget.insert("end", f"{type(exc).__name__}: {exc}\n")
+        widget.see("end")
+        widget.configure(state="disabled")
+
+    def inspect_node(self, node) -> None:
+        """Open devtools and highlight a node's ancestry."""
+        if self._devtools is None or not self._devtools.winfo_exists():
+            self.toggle_devtools()
+        widget = self._devtools_text.get("dom")
+        if widget is None or node is None:
+            return
+        chain = []
+        probe = node
+        while probe is not None:
+            chain.append(probe)
+            probe = probe.parent
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        for item in reversed(chain):
+            widget.insert("end", f"{'  ' * min(item.depth(), 14)}{item.dump(0, 1)}\n")
+        widget.configure(state="disabled")
+        try:
+            self._devtools_notebook.select(2)
+        except Exception:
+            pass
+        self.set_status("Inspecting element in developer tools")
+
+    def _refresh_network_panel(self) -> None:
+        widget = self._devtools_text.get("network")
+        if widget is None or not widget.winfo_exists():
+            return
+        stats = self.cache.stats()
+        summary = (f"HTTP cache: {stats['entries']} entries, "
+                   f"{format_bytes(int(stats['bytes']))}, "
+                   f"{stats['hits']} hits / {stats['misses']} misses / "
+                   f"{stats['revalidated']} revalidated\n"
+                   + "-" * 78 + "\n")
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("end", summary + self.client.log_text())
+        widget.configure(state="disabled")
+        if self._devtools is not None and self._devtools.winfo_exists():
+            self._devtools.after(1500, self._refresh_network_panel)
 
     def refresh_devtools(self, tab: Optional[BrowserTab]) -> None:
         if self._devtools is None or not self._devtools.winfo_exists() or tab is None:
             return
+        self._refresh_network_panel()
         dom_text = self._devtools_text.get("dom")
         if dom_text is not None:
             dom_text.configure(state="normal")
@@ -694,7 +879,10 @@ class BrowserApp(tk.Tk):
             layout_text.configure(state="normal")
             layout_text.delete("1.0", "end")
             boxes = list(tab.layout.walk()) if tab.layout is not None else []
-            layout_text.insert("end", f"boxes: {len(boxes)}\n"
+            drawn = getattr(tab.renderer, "drawn_boxes", 0)
+            items = getattr(tab.renderer, "drawn_items", 0)
+            layout_text.insert("end", f"boxes: {len(boxes)} (painted: {drawn})\n"
+                                      f"canvas items: {items}\n"
                                       f"page height: {int(tab.layout.height) if tab.layout else 0}px\n\n")
             for box in boxes[:400]:
                 layout_text.insert(
@@ -760,8 +948,16 @@ class BrowserApp(tk.Tk):
     # Thread plumbing
     # ------------------------------------------------------------------
     def submit(self, fn: Callable[[], None]) -> None:
-        import threading
-        threading.Thread(target=fn, daemon=True).start()
+        """Queue work on the shared pool (8 workers, daemon threads)."""
+        def guarded() -> None:
+            try:
+                fn()
+            except Exception:
+                traceback.print_exc()
+        try:
+            self._pool.submit(guarded)
+        except RuntimeError:            # pool already shut down
+            pass
 
     def ui(self, fn: Callable[[], None]) -> None:
         self._queue.put(fn)
@@ -792,12 +988,17 @@ class BrowserApp(tk.Tk):
         if self._closing:
             return
         self._closing = True
+        try:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:               # Python < 3.9
+            self._pool.shutdown(wait=False)
         tab = self.current_tab()
         try:
             if tab is not None:
                 self.settings["zoom"] = tab.zoom
             self.settings["profile"] = self.profile_name or ""
             self.store.save_settings(self.settings)
+            self.store.flush()
             self.cookie_jar.save()
         except Exception:
             pass

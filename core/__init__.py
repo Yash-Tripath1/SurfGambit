@@ -11,4 +11,4 @@ headlessly (see tests/run.py):
     core.js      JavaScript subset bound to the DOM
 """
 
-__version__ = "2.0"
+__version__ = "3.0"

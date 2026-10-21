@@ -25,7 +25,7 @@ tracks, which keeps pages readable instead of collapsing them.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..values import Length, parse_length
 from .box import LayoutBox, resolve_length

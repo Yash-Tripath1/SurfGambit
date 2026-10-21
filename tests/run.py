@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import traceback
 from typing import Callable, List, Tuple
 
@@ -551,6 +552,348 @@ def _():
     eq(len(prefix_elements(dom)), 1)
     eq(css_compiler.CSSRule("a .b", {}).specificity, 11)
     eq(game.SpaceInvaderGame is game.SpaceInvaders, True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2/3 additions: cache, streaming, culling, SurfScript 2.0, timers
+# ---------------------------------------------------------------------------
+
+@check("cache", "fresh entries are served without touching the network")
+def _():
+    from core.net.cache import HTTPCache
+
+    cache = HTTPCache(None)
+    cache.store("https://example.com/", 200, "OK",
+                {"cache-control": "max-age=600"}, [], b"<html>hi</html>")
+    entry = cache.lookup("https://example.com/")
+    if entry is None or not entry.is_fresh():
+        raise AssertionError("entry was not usable")
+    eq(entry.body, b"<html>hi</html>")
+    eq(cache.stats()["hits"], 1)
+
+
+@check("cache", "stale entries are stored but revalidated, not reused blindly")
+def _():
+    from core.net.cache import HTTPCache
+
+    cache = HTTPCache(None)
+    cache.store("https://example.com/", 200, "OK",
+                {"etag": '"v1"', "cache-control": "max-age=0"}, [], b"x")
+    entry = cache.lookup("https://example.com/")
+    if entry is None or entry.is_fresh():
+        raise AssertionError("entry should be stale with max-age=0")
+    eq(entry.conditional_headers(), {"If-None-Match": '"v1"'})
+    entry.refresh({"etag": '"v1"', "cache-control": "max-age=600"}, [])
+    if not entry.is_fresh():
+        raise AssertionError("304 did not extend freshness")
+
+
+@check("cache", "entries survive a restart and no-store is never written")
+def _():
+    from core.net.cache import HTTPCache
+
+    directory = tempfile.mkdtemp(prefix="sg-cache-")
+    first = HTTPCache(directory)
+    first.store("https://example.com/a", 200, "OK", {}, [], b"body-a")
+    first.store("https://example.com/b", 200, "OK",
+                {"cache-control": "no-store"}, [], b"body-b")
+    second = HTTPCache(directory)
+    entry = second.lookup("https://example.com/a")
+    eq(entry.body if entry else None, b"body-a")
+    eq(second.lookup("https://example.com/b"), None)
+
+
+@check("net", "requests are logged for the devtools network panel")
+def _():
+    import threading
+    import http.server
+    import socketserver
+    from core.net.client import HTTPClient
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b"hello"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        client = HTTPClient()
+        response = client.get(f"http://127.0.0.1:{port}/")
+        eq(response.text, "hello")
+        eq(len(client.log), 1)
+        eq(client.log[0].status, 200)
+        if "GET" not in client.log_text():
+            raise AssertionError("log_text did not render")
+    finally:
+        server.shutdown()
+
+
+@check("net", "streaming download reports progress and can be cancelled")
+def _():
+    import threading
+    import http.server
+    import socketserver
+    from core.net.client import HTTPClient, Cancelled
+
+    blob = b"q" * (96 * 1024)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        client = HTTPClient()
+        seen = []
+        written, _headers = client.stream(
+            f"http://127.0.0.1:{port}/f", open(os.devnull, "wb"),
+            progress=lambda done, total: seen.append((done, total)))
+        eq(written, len(blob))
+        if not seen or seen[-1][1] != len(blob):
+            raise AssertionError(f"progress was wrong: {seen[:3]}")
+
+        cancel = threading.Event()
+        cancel.set()
+        try:
+            client.stream(f"http://127.0.0.1:{port}/f", open(os.devnull, "wb"),
+                          cancel=cancel)
+        except Cancelled:
+            pass
+        else:
+            raise AssertionError("cancel did not abort the transfer")
+    finally:
+        server.shutdown()
+
+
+@check("paint", "the renderer culls boxes outside the viewport")
+def _():
+    from ui.renderer import Renderer
+
+    class FakeBox:
+        def __init__(self, y, height):
+            self.y = y
+            self.height = height
+
+    renderer = Renderer.__new__(Renderer)      # no Tk needed for this check
+    renderer._viewport = (1000.0, 2000.0)
+    if renderer._intersects(FakeBox(0, 500)):
+        raise AssertionError("box above the viewport was not culled")
+    if renderer._intersects(FakeBox(2500, 500)):
+        raise AssertionError("box below the viewport was not culled")
+    if not renderer._intersects(FakeBox(1500, 200)):
+        raise AssertionError("visible box was culled")
+    if not renderer._intersects(FakeBox(1900, 400)):
+        raise AssertionError("box straddling the bottom edge was culled")
+
+
+@check("js", "loops, functions and closures behave")
+def _():
+    from core.js.surfscript import Interpreter
+
+    interp = Interpreter()
+    eq(interp.evaluate_source("let s=0; for (let i=0;i<6;i++){ s+=i; } s"), 15)
+    eq(interp.evaluate_source(
+        "function f(n){ if(n<=1) return 1; return n*f(n-1); } f(6)"), 720)
+    eq(interp.evaluate_source(
+        "function add(a){ return function(b){ return a+b; }; } add(2)(3)"), 5)
+    eq(interp.evaluate_source("let i=0; let n=0; while(true){ i++; if(i>4){break;} n+=i; } n"), 10)
+
+
+@check("js", "arrays, objects and string methods behave")
+def _():
+    from core.js.surfscript import Interpreter
+
+    interp = Interpreter()
+    eq(interp.evaluate_source("[3,1,2].sort().join('')"), "123")
+    eq(interp.evaluate_source("let a=[1,2,3]; a.push(4); a.length"), 4)
+    eq(interp.evaluate_source(
+        "[1,2,3,4].filter(function(v){return v%2===0;}).map(function(v){return v*10;}).join('-')"),
+       "20-40")
+    eq(interp.evaluate_source("let o={a:1}; o['b']=2; o.a + o.b"), 3)
+    eq(interp.evaluate_source("'  Mixed Case  '.trim().toLowerCase()"), "mixed case")
+    eq(interp.evaluate_source("'a,b,c'.split(',').length"), 3)
+    eq(interp.evaluate_source("typeof [1] === 'object' && Array.isArray([1])"), True)
+
+
+@check("js", "comments and ternary expressions parse")
+def _():
+    from core.js.surfscript import Interpreter
+
+    interp = Interpreter()
+    eq(interp.evaluate_source("// line\nlet x=2; /* block */ x > 1 ? 'yes' : 'no'"), "yes")
+
+
+@check("js", "regex literals, bitwise operators and `new` work")
+def _():
+    from core.js.surfscript import Interpreter
+
+    interp = Interpreter()
+    eq(interp.evaluate_source("let re = /^ab+c$/; re.test('abbbc')"), True)
+    eq(interp.evaluate_source("'a1b22'.replace(/[0-9]+/, '#')"), "a#b22")
+    eq(interp.evaluate_source("'x y  z'.split(/\\s+/).length"), 3)
+    eq(interp.evaluate_source("6 & 3"), 2)
+    eq(interp.evaluate_source("1 << 4"), 16)
+    eq(interp.evaluate_source(
+        "function Point(x, y) { this.x = x; this.y = y; }"
+        "let p = new Point(2, 3); p.x * p.y"), 6)
+    eq(interp.evaluate_source("new Date().getFullYear() > 2000"), True)
+
+
+@check("js", "the instruction budget stops runaway loops")
+def _():
+    from core.js.dom_bridge import DocumentRuntime
+
+    runtime = DocumentRuntime(parse("<body></body>"))
+    errors = runtime.evaluate_script("while (true) { }")
+    if not errors or "instruction budget" not in errors[0]:
+        raise AssertionError(f"no budget error: {errors}")
+
+
+@check("js", "DOM API: createElement, appendChild, classList, querySelectorAll")
+def _():
+    from core.js.dom_bridge import DocumentRuntime
+
+    dom = parse('<body><div id="host" class="a"></div><p class="x">one</p>'
+                '<p class="x">two</p></body>')
+    runtime = DocumentRuntime(dom)
+    errors = runtime.evaluate_script(
+        "let d = document.createElement('span');"
+        "d.textContent = 'new';"
+        "d.classList.add('tag');"
+        "document.getElementById('host').appendChild(d);"
+        "document.getElementById('host').classList.toggle('b');")
+    eq(errors, [])
+    host = next(n for n in dom.walk() if n.attributes.get("id") == "host")
+    eq([c.tag for c in host.children], ["span"])
+    eq(host.children[0].text_content(), "new")
+    eq(sorted(host.attributes["class"].split()), ["a", "b"])
+    eq(runtime.interp.evaluate_source("document.querySelectorAll('p.x').length"), 2)
+    eq(runtime.interp.evaluate_source("document.querySelector('#host span').textContent"),
+       "new")
+
+
+@check("js", "click listeners fire and can cancel the default action")
+def _():
+    from core.js.dom_bridge import DocumentRuntime, Event
+
+    dom = parse('<body><a id="link" href="/next">go</a></body>')
+    runtime = DocumentRuntime(dom)
+    runtime.evaluate_script(
+        "document.getElementById('link').addEventListener('click', function (e) {"
+        "  e.preventDefault();"
+        "  document.title = 'clicked';"
+        "});")
+    link = next(n for n in dom.walk() if n.attributes.get("id") == "link")
+    event = Event("click", runtime.wrap(link))
+    runtime.dispatch(link, event)
+    eq(event.default_prevented, True)
+    eq(dom.find("title").text_content(), "clicked")
+
+
+@check("js", "inline onclick attributes run with the right `this`")
+def _():
+    from core.js.dom_bridge import DocumentRuntime, Event
+
+    dom = parse('<body><button id="b" onclick="this.textContent = \'hit\'">press</button></body>')
+    runtime = DocumentRuntime(dom)
+    button = next(n for n in dom.walk() if n.attributes.get("id") == "b")
+    runtime.dispatch(button, Event("click", runtime.wrap(button)))
+    eq(button.text_content(), "hit")
+
+
+@check("js", "setInterval re-arms itself and clearInterval stops it")
+def _():
+    from core.js.dom_bridge import DocumentRuntime
+
+    dom = parse("<body><span id=\"n\">0</span></body>")
+    runtime = DocumentRuntime(dom)
+    runtime.evaluate_script(
+        "let n = 0;"
+        "let id = setInterval(function () {"
+        "  n = n + 1;"
+        "  document.getElementById('n').textContent = String(n);"
+        "  if (n === 2) { clearInterval(id); }"
+        "}, 1);")
+    for _step in range(40):
+        runtime.run_due_timers()
+        time.sleep(0.01)
+    eq(dom.find("span").text_content(), "2")
+
+
+@check("downloads", "downloads stream to disk, report progress and cancel cleanly")
+def _():
+    import threading
+    import http.server
+    import socketserver
+    from core.downloads import DownloadManager
+    from core.net.client import HTTPClient
+    from core.store import Store
+
+    blob = b"z" * (128 * 1024)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(blob)))
+            self.send_header("Content-Disposition", 'attachment; filename="big.bin"')
+            self.end_headers()
+            self.wfile.write(blob)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        directory = tempfile.mkdtemp(prefix="sg-dl-")
+        store = Store(directory)
+        manager = DownloadManager(store, HTTPClient())
+        download = manager.start(f"http://127.0.0.1:{port}/big.bin", directory)
+        for _spin in range(200):
+            if download.status in ("complete", "failed", "cancelled"):
+                break
+            time.sleep(0.02)
+        eq(download.status, "complete")
+        eq(os.path.getsize(download.path), len(blob))
+        eq(download.progress, 1.0)
+    finally:
+        server.shutdown()
+
+
+@check("store", "history writes are coalesced but flush on demand")
+def _():
+    from core.store import Store
+
+    directory = tempfile.mkdtemp(prefix="sg-flush-")
+    store = Store(directory)
+    store.record_visit("https://example.com/one", "One")
+    store.record_visit("https://example.com/two", "Two")
+    store.flush()
+    path = os.path.join(directory, "history.json")
+    if not os.path.exists(path):
+        raise AssertionError("history file was never written")
+    import json
+
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    eq(len(data), 2)
 
 
 def prefix_elements(dom: HTMLNode):

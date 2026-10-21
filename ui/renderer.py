@@ -11,12 +11,16 @@ Details that used to be wrong and are fixed here:
   * images are scaled to their CSS box, not left at native size
   * `visibility: hidden` is respected
   * text is drawn per run, not per word (≈4× fewer canvas items)
+  * **viewport culling**: only boxes that intersect the visible band are
+    turned into canvas items, so a 40 000 px Wikipedia page costs the same to
+    scroll as a one-screen page
+  * every painted run is tagged with its DOM node, which is what lets clicks
+    reach script listeners (see `node_map`)
 """
 
 from __future__ import annotations
 
 import math
-from fractions import Fraction
 from typing import Callable, Dict, List, Optional, Tuple
 
 import tkinter as tk
@@ -24,7 +28,6 @@ import tkinter as tk
 from core.dom.tree import HTMLNode
 from core.layout.box import LayoutBox, InlineItem
 from core.layout.text import TextMeasurer
-from core.style.cascade import get_style
 from core.values import is_dark
 
 __all__ = ["Renderer", "find_link"]
@@ -69,25 +72,58 @@ class Renderer:
         self._default_fg = "#000000"
         self._z = 1
         self.form_factory = None
+        self.node_map: Dict[int, HTMLNode] = {}
+        self.drawn_boxes = 0
+        self.drawn_items = 0
+        self._viewport: Optional[Tuple[float, float]] = None
 
     # -- public -----------------------------------------------------------
-    def render(self, root: LayoutBox, base_url: str = "", search_term: str = "") -> None:
+    def render(self, root: LayoutBox, base_url: str = "",
+               search_term: str = "",
+               viewport: Optional[Tuple[float, float]] = None) -> None:
+        """Paint the layout tree.
+
+        `viewport` is an optional (top, bottom) band in page coordinates;
+        boxes outside it are laid out but not turned into canvas items.
+        """
         self.base_url = base_url
         self.search_term = search_term or ""
         self.search_hits = 0
         self.link_map.clear()
+        self.node_map.clear()
         self._next_link_id = 1
         self.canvas.delete("all")
         self._z = 1
+        self._viewport = viewport
+        self.drawn_boxes = 0
+        self.drawn_items = 0
+
+        if self.search_term:
+            self.search_hits = _count_search_hits(root, self.search_term)
+
         stack: List[LayoutBox] = [root]
         while stack:
             box = stack.pop()
-            self._draw(box)
+            if self._intersects(box):
+                self._draw(box)
             # Inline children are painted as line items; only recurse into
             # block-level boxes to avoid double-drawing.
             for child in reversed(box.children):
                 if child.is_block_level():
                     stack.append(child)
+
+    # -- culling ----------------------------------------------------------
+    def _intersects(self, box: LayoutBox) -> bool:
+        if self._viewport is None:
+            return True
+        top, bottom = self._viewport
+        return not (box.y + box.height < top or box.y > bottom)
+
+    def _item_visible(self, y: float, height: float) -> bool:
+        if self._viewport is None:
+            return True
+        top, bottom = self._viewport
+        return not (y + height < top or y > bottom)
 
     # -- primitives -------------------------------------------------------
     def _rect(self, x1, y1, x2, y2, **kwargs):
@@ -122,6 +158,7 @@ class Renderer:
         if box.width <= 0 or box.height <= 0:
             if not box.lines:
                 return
+        self.drawn_boxes += 1
 
         radius = float(style.get("border-top-left-radius", 0) or 0)
 
@@ -137,6 +174,9 @@ class Renderer:
 
         for line in box.lines:
             for item in line.items:
+                if not self._item_visible(item.y, item.height):
+                    continue
+                self.drawn_items += 1
                 self._draw_item(item)
 
     def _draw_borders(self, box: LayoutBox, radius: float) -> None:
@@ -261,13 +301,32 @@ class Renderer:
             )
             color = "#000000"
 
+        node_tag = ()
+        if item.node is not None:
+            self.node_map[id(item.node)] = item.node
+            node_tag = (f"n{id(item.node)}",)
         self.canvas.create_text(
             item.x, item.y, text=item.text, anchor="nw", fill=color,
             font=font if font else ("Arial", max(6, int(spec.size))),
-            tags=tags,
+            tags=tags + node_tag,
         )
 
     def _draw_image(self, item: InlineItem) -> None:
+        node = item.node
+        if node is None:
+            self._paint_image(item)
+            return
+        first = self.canvas.find_all()
+        self._paint_image(item)
+        self._tag_new_items(first, f"n{id(node)}")
+        self.node_map[id(node)] = node
+
+    def _tag_new_items(self, first, tag: str) -> None:
+        created = self.canvas.find_all()
+        for canvas_id in created[len(first):]:
+            self.canvas.addtag_withtag(tag, canvas_id)
+
+    def _paint_image(self, item: InlineItem) -> None:
         url = (item.node.attributes.get("src") if item.node else "") or ""
         photo = None
         if self.image_provider and url:
@@ -275,6 +334,8 @@ class Renderer:
             photo = self.image_provider(abs_url)
 
         w, h = item.width, item.height
+        if item.node is not None:
+            self.node_map[id(item.node)] = item.node
         if photo is not None:
             scaled = self._fit_image(photo, abs_url, w, h)
             if scaled is not None:
@@ -333,6 +394,14 @@ class Renderer:
         node = item.node
         if node is None:
             return
+        first = self.canvas.find_all()
+        self._paint_widget(item)
+        self._tag_new_items(first, f"n{id(node)}")
+
+    def _paint_widget(self, item: InlineItem) -> None:
+        node = item.node
+        if node is None:
+            return
         tag = node.tag
         style = item.style
         x, y, w, h = item.x, item.y, item.width, item.height
@@ -341,6 +410,7 @@ class Renderer:
         itype = (node.attributes.get("type") or "text").lower()
         if itype == "hidden":
             return
+        self.node_map[id(node)] = node
 
         # A live Tk widget beats a painted one: it can be typed into, and it
         # makes the surrounding <form> submittable.
@@ -414,3 +484,18 @@ class Renderer:
 def _absolute(url: str, base: str) -> str:
     from urllib.parse import urljoin
     return urljoin(base, url) if base else url
+
+
+def _count_search_hits(root: LayoutBox, term: str) -> int:
+    """Count matches over the whole page, not just the visible slice."""
+    needle = term.lower()
+    hits = 0
+    stack: List[LayoutBox] = [root]
+    while stack:
+        box = stack.pop()
+        for line in box.lines:
+            for item in line.items:
+                if item.kind == "word" and item.text and needle in item.text.lower():
+                    hits += 1
+        stack.extend(child for child in box.children if child.is_block_level())
+    return hits

@@ -16,10 +16,9 @@ DOM mutation (it is the old name for `on_mutation`).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from core.dom.tree import HTMLNode, TEXT_TAG
-from core.js import surfscript as _impl
 from core.js.surfscript import (DOMElementWrapper, DOMStyleWrapper, JSEvaluator,
                                 JSParser, Lexer, ScriptError, Token,
                                 evaluate_event_handler as _evaluate_handler,
