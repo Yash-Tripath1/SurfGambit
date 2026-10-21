@@ -17,6 +17,7 @@ import os
 import queue
 import tkinter as tk
 import traceback
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional
@@ -37,20 +38,26 @@ from ui.tab import BrowserTab
 APP_NAME = "SurfGambit"
 VERSION = "1.0"
 
-BG = "#1b1b1f"
-BG_ALT = "#24242a"
-FG = "#e6e6e6"
-FG_DIM = "#9aa0a6"
+# The chrome palette from the original hand-built interface.
+BG = "#1e1e1e"          # navigation row
+BG_ALT = "#151515"      # utility row / status bar
+FG = "#ffffff"
+FG_DIM = "#aaaaaa"
 ACCENT = "#00adb5"
-BORDER = "#34343c"
+BORDER = "#333333"
+TAB_BAR_BG = "#111111"
+TAB_ACTIVE = "#2d2d2d"
+TAB_IDLE = "#151515"
+BUTTON_BG = "#333333"
+ENTRY_BG = "#2b2b2b"
 
 
 class BrowserApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.root = self
-        self.title(APP_NAME)
-        self.geometry("1280x860")
+        self.title("SurfGambit Browser")
+        self.geometry("1200x800")
         self.minsize(720, 480)
         self.configure(bg=BG)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -89,12 +96,12 @@ class BrowserApp(tk.Tk):
                                          on_update=lambda d: self.ui(
                                              lambda: self._on_download_update(d)))
 
+        self.tabs: List["BrowserTab"] = []
+        self.active_tab_idx: int = -1
+
         self._build_style()
         self._build_menu()
-        self._build_toolbar()
-        self._build_notebook()
-        self._build_findbar()
-        self._build_statusbar()
+        self._build_chrome()
         self._bind_shortcuts()
 
         self.after(30, self._pump)
@@ -232,75 +239,130 @@ class BrowserApp(tk.Tk):
 
         self.config(menu=menubar)
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self, style="Toolbar.TFrame", padding=(6, 5))
-        bar.pack(side="top", fill="x")
-        self.toolbar = bar
+    def _build_chrome(self) -> None:
+        """The three-row chrome, as it was originally built by hand:
+        tab strip, navigation row, utility row, viewport, status bar."""
 
-        self.back_btn = ttk.Button(bar, text="\u2190", width=3,
-                                   command=lambda: self.current_tab().go_back())
-        self.forward_btn = ttk.Button(bar, text="\u2192", width=3,
-                                      command=lambda: self.current_tab().go_forward())
-        self.reload_btn = ttk.Button(bar, text="\u27f3", width=3,
-                                     command=self.reload_or_stop)
-        home_btn = ttk.Button(bar, text="\u2302", width=3,
-                              command=lambda: self.current_tab().navigate(
-                                  self.settings.get("homepage", "surfgambit://welcome")))
-        for widget in (self.back_btn, self.forward_btn, self.reload_btn, home_btn):
-            widget.pack(side="left", padx=1)
+        # ---- row 1: custom tab strip -----------------------------------
+        self.tab_bar_frame = tk.Frame(self, bg=TAB_BAR_BG, height=32)
+        self.tab_bar_frame.pack(side="top", fill="x")
 
-        self.mascot = Mascot(bar, size=24, bg=BG_ALT,
+        # ---- row 2: navigation -----------------------------------------
+        nav1 = tk.Frame(self, bg=BG, padx=6, pady=4)
+        nav1.pack(side="top", fill="x")
+        self.nav_row1 = nav1
+
+        btn = dict(bg=BUTTON_BG, fg="#ffffff", activebackground="#555555",
+                   activeforeground="white", bd=0, padx=10, pady=5,
+                   font=("Arial", 11, "bold"), cursor="hand2")
+
+        self.back_btn = tk.Button(nav1, text="\u25c0", command=self.go_back, **btn)
+        self.back_btn.pack(side="left", padx=2)
+        self.forward_btn = tk.Button(nav1, text="\u25b6", command=self.go_forward, **btn)
+        self.forward_btn.pack(side="left", padx=2)
+        self.reload_btn = tk.Button(nav1, text="\u27f3", command=self.reload_or_stop, **btn)
+        self.reload_btn.pack(side="left", padx=2)
+
+        self.address_var = tk.StringVar()
+        self.url_entry = tk.Entry(nav1, textvariable=self.address_var, bg=ENTRY_BG,
+                                  fg="#ffffff", insertbackground="white", bd=0,
+                                  font=("Arial", 12))
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=8, ipady=4)
+        self.url_entry.bind("<Return>", self._on_address_enter)
+        self.url_entry.bind("<FocusIn>", self._on_address_focus)
+        self.url_entry.bind("<Escape>", lambda e: self._focus_page())
+        self.address = self.url_entry           # code paths that predate the rename
+
+        self.go_btn = tk.Button(nav1, text="\u2794", command=self._on_address_enter, **btn)
+        self.go_btn.pack(side="left", padx=2)
+
+        self.star_btn = tk.Button(nav1, text="\u2b50", command=self.bookmark_current,
+                                  **{**btn, "padx": 8})
+        self.star_btn.pack(side="left", padx=2)
+
+        tk.Label(nav1, text="\U0001f50d:", fg="white", bg=BG,
+                 font=("Arial", 10)).pack(side="left", padx=2)
+        self.search_engine_combo = ttk.Combobox(
+            nav1, values=["Google", "DuckDuckGo", "Wikipedia", "Images"],
+            width=11, state="readonly")
+        engine = self.settings.get("search_engine", "DuckDuckGo")
+        if engine not in ("Google", "DuckDuckGo", "Wikipedia", "Images"):
+            engine = "DuckDuckGo"
+        self.search_engine_combo.set(engine)
+        self.search_engine_combo.pack(side="left", padx=4)
+        self.search_engine_combo.bind("<<ComboboxSelected>>", self._on_engine_changed)
+
+        # ---- row 3: mascot / zoom / find / devtools ---------------------
+        nav2 = tk.Frame(self, bg=BG_ALT, padx=6, pady=4)
+        nav2.pack(side="top", fill="x")
+        self.nav_row2 = nav2
+
+        self.mascot = Mascot(nav2, size=24, bg=BG_ALT,
                              is_busy=lambda: bool(self.current_tab()
                                                   and self.current_tab().is_loading),
                              is_enabled=lambda: self.settings.get("mascot_active", "on") == "on",
                              on_hover=self._mascot_status)
-        self.mascot.pack(side="left", padx=(8, 6))
+        self.mascot.pack(side="left", padx=8)
+        self.mascot.bind("<Button-1>", lambda e: self.trigger_game_navigation())
+        self.alien = self.mascot
 
-        self.address_var = tk.StringVar()
-        self.address = ttk.Entry(bar, textvariable=self.address_var)
-        self.address.pack(side="left", fill="x", expand=True, padx=6)
-        self.address.bind("<Return>", self._on_address_enter)
-        self.address.bind("<FocusIn>", self._on_address_focus)
-        self.address.bind("<Escape>", lambda e: (self.current_tab().canvas.focus_set()))
+        small = {**btn, "bg": "#222222", "padx": 6, "pady": 2,
+                 "font": ("Arial", 9, "bold")}
+        tk.Label(nav2, text="\U0001f50d Zoom:", fg="#aaa", bg=BG_ALT,
+                 font=("Arial", 10)).pack(side="left", padx=4)
+        self.zoom_out_btn = tk.Button(nav2, text="\u2796",
+                                      command=lambda: self.zoom_by(-0.1), **small)
+        self.zoom_out_btn.pack(side="left", padx=1)
+        self.zoom_lbl = tk.Label(nav2, text="100%", fg="white", bg=BG_ALT,
+                                 font=("Arial", 10, "bold"))
+        self.zoom_lbl.pack(side="left", padx=6)
+        self.zoom_in_btn = tk.Button(nav2, text="\u2795",
+                                     command=lambda: self.zoom_by(0.1), **small)
+        self.zoom_in_btn.pack(side="left", padx=1)
 
-        self.star_btn = ttk.Button(bar, text="\u2606", width=3,
-                                   command=self.bookmark_current)
-        self.star_btn.pack(side="left", padx=1)
-        ttk.Button(bar, text="Go", style="Accent.TButton",
-                   command=self._on_address_enter).pack(side="left", padx=(4, 2))
-        ttk.Button(bar, text="+", width=3,
-                   command=lambda: self.add_tab()).pack(side="left", padx=(2, 0))
+        tk.Label(nav2, text=" | ", fg="#444", bg=BG_ALT).pack(side="left", padx=6)
 
-    def _build_notebook(self) -> None:
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(side="top", fill="both", expand=True)
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
-        self.notebook.bind("<Button-2>", self._on_tab_middle_click)
-
-    def _build_findbar(self) -> None:
-        self.find_frame = ttk.Frame(self, style="Toolbar.TFrame", padding=(8, 4))
-        ttk.Label(self.find_frame, text="Find:", style="Status.TLabel").pack(side="left")
+        tk.Label(nav2, text="\U0001f4c4 Find on Page:", fg="#aaa", bg=BG_ALT,
+                 font=("Arial", 10)).pack(side="left", padx=2)
         self.find_var = tk.StringVar()
-        self.find_entry = ttk.Entry(self.find_frame, textvariable=self.find_var, width=32)
-        self.find_entry.pack(side="left", padx=6)
-        self.find_var.trace_add("write", lambda *a: self._run_find())
+        self.find_entry = tk.Entry(nav2, textvariable=self.find_var, bg=ENTRY_BG,
+                                   fg="#ffffff", insertbackground="white", bd=0,
+                                   font=("Arial", 11), width=18)
+        self.find_entry.pack(side="left", padx=4, ipady=2)
         self.find_entry.bind("<Return>", lambda e: self._run_find())
         self.find_entry.bind("<Escape>", lambda e: self.close_find())
-        self.find_label = ttk.Label(self.find_frame, text="", style="Status.TLabel")
-        self.find_label.pack(side="left", padx=6)
-        ttk.Button(self.find_frame, text="\u2715", width=3,
-                   command=self.close_find).pack(side="right")
-        self._find_visible = False
+        self.find_var.trace_add("write", lambda *a: self._run_find())
 
-    def _build_statusbar(self) -> None:
-        bar = ttk.Frame(self, style="Toolbar.TFrame", padding=(8, 3))
+        mid = {**btn, "bg": "#2d2d2d", "padx": 10, "pady": 2,
+               "font": ("Arial", 9, "bold")}
+        self.find_btn = tk.Button(nav2, text="Find", command=self._run_find, **mid)
+        self.find_btn.pack(side="left", padx=2)
+        self.clear_btn = tk.Button(nav2, text="Clear", command=self.clear_find, **mid)
+        self.clear_btn.pack(side="left", padx=2)
+
+        self.devtools_btn = tk.Button(
+            nav2, text="\U0001f6e0 DevTools Console", command=self.toggle_devtools,
+            **{**btn, "bg": "#2d2d2d", "padx": 12, "pady": 2,
+               "font": ("Arial", 10, "bold")})
+        self.devtools_btn.pack(side="right", padx=4)
+
+        # ---- viewport ---------------------------------------------------
+        self.viewport_frame = tk.Frame(self, bg="#000000")
+        self.viewport_frame.pack(side="top", fill="both", expand=True)
+
+        # ---- status bar -------------------------------------------------
+        bar = tk.Frame(self, bg=BG_ALT, bd=1, relief="sunken")
         bar.pack(side="bottom", fill="x")
-        self.status_label = ttk.Label(bar, text="Ready", style="Status.TLabel")
-        self.status_label.pack(side="left")
-        self.loading_bar = ttk.Progressbar(bar, mode="indeterminate", length=110)
+        self._status_frame = bar
+        self.status_bar = tk.Label(bar, text="Done", anchor="w", bg=BG_ALT, fg="#aaa",
+                                   font=("Arial", 10), padx=4, pady=3)
+        self.status_bar.pack(side="left")
+        self.status_label = self.status_bar
+        self.loading_bar = ttk.Progressbar(bar, mode="indeterminate", length=90)
         self._loading_shown = False
-        self.right_label = ttk.Label(bar, text="", style="Status.TLabel")
-        self.right_label.pack(side="right")
+        self.right_label = tk.Label(bar, text="", bg=BG_ALT, fg="#888",
+                                    font=("Arial", 9))
+        self.right_label.pack(side="right", padx=6)
 
     def _bind_shortcuts(self) -> None:
         bindings = {
@@ -353,59 +415,104 @@ class BrowserApp(tk.Tk):
         self.add_tab(homepage)
 
     def add_tab(self, url: Optional[str] = None) -> BrowserTab:
-        tab = BrowserTab(self.notebook, self)
-        self.notebook.add(tab, text="New tab")
-        self.notebook.select(tab)
+        tab = BrowserTab(self.viewport_frame, self)
+        self.tabs.append(tab)
         try:
             tab.set_zoom(float(self.settings.get("zoom", 1.0)))
         except Exception:
             pass
+        self.select_tab(len(self.tabs) - 1)
         if url:
             tab.navigate(url, push_history=False)
         tab.canvas.focus_set()
         return tab
 
-    def current_tab(self) -> Optional[BrowserTab]:
-        notebook = getattr(self, "notebook", None)
-        if notebook is None:
-            return None
+    def new_tab(self) -> BrowserTab:
+        return self.add_tab(self.settings.get("homepage") or "surfgambit://welcome")
+
+    def select_tab(self, idx: int) -> None:
+        if not (0 <= idx < len(self.tabs)):
+            return
+        if 0 <= self.active_tab_idx < len(self.tabs):
+            self.tabs[self.active_tab_idx].pack_forget()
+        self.active_tab_idx = idx
+        tab = self.tabs[idx]
+        tab.pack(fill="both", expand=True)
+        self.update_chrome(tab)
+        tab.canvas.focus_set()
+
+    def close_tab_at(self, idx: int) -> None:
+        if not (0 <= idx < len(self.tabs)):
+            return
+        if len(self.tabs) == 1:
+            self.set_status("Cannot close the last remaining tab!", timeout_ms=2500)
+            return
+        tab = self.tabs.pop(idx)
         try:
-            selected = notebook.select()
-        except tk.TclError:
-            return None
-        if not selected:
-            return None
-        widget = self.nametowidget(selected)
-        return widget if isinstance(widget, BrowserTab) else None
+            tab.stop_game()
+        except Exception:
+            pass
+        tab.destroy()
+        for other in self.tabs:
+            other.pack_forget()
+        self.active_tab_idx = min(idx, len(self.tabs) - 1)
+        self.tabs[self.active_tab_idx].pack(fill="both", expand=True)
+        self.update_chrome(self.tabs[self.active_tab_idx])
+
+    def current_tab(self) -> Optional[BrowserTab]:
+        if 0 <= self.active_tab_idx < len(self.tabs):
+            return self.tabs[self.active_tab_idx]
+        return None
 
     def close_current_tab(self) -> None:
+        self.close_tab_at(self.active_tab_idx)
+
+    def _render_tab_strip(self) -> None:
+        for child in list(self.tab_bar_frame.winfo_children()):
+            child.destroy()
+        for index, tab in enumerate(self.tabs):
+            active = index == self.active_tab_idx
+            bg = TAB_ACTIVE if active else TAB_IDLE
+            frame = tk.Frame(self.tab_bar_frame, bg=bg, padx=4, pady=2)
+            frame.pack(side="left", padx=2, fill="y")
+            label = tab.title or "New tab"
+            label = (label[:26] + "\u2026") if len(label) > 27 else label
+            lbl = tk.Label(frame, text=label, bg=bg, fg="#ffffff",
+                           font=("Arial", 10), cursor="hand2", padx=2)
+            lbl.pack(side="left")
+            lbl.bind("<Button-1>", lambda e, i=index: self.select_tab(i))
+            close = tk.Button(frame, text="\u00d7", bg=bg, fg="#aaaaaa",
+                              activebackground="#444444", activeforeground="white",
+                              bd=0, font=("Arial", 11, "bold"), padx=2, pady=0,
+                              cursor="hand2", command=lambda i=index: self.close_tab_at(i))
+            close.pack(side="left", padx=2)
+        tk.Button(self.tab_bar_frame, text=" \uff0b ", bg=TAB_BAR_BG, fg="white",
+                  activebackground="#333333", activeforeground="white", bd=0,
+                  font=("Arial", 11, "bold"), cursor="hand2", padx=6, pady=2,
+                  command=self.new_tab).pack(side="left", padx=4)
+
+    def go_back(self) -> None:
         tab = self.current_tab()
-        if tab is None:
-            return
-        if len(self.notebook.tabs()) == 1:
-            tab.navigate("surfgambit://welcome", push_history=False)
-            return
-        tab.stop_game()
-        tab.destroy()
-        self.update_chrome(self.current_tab())
+        if tab is not None:
+            tab.go_back()
+
+    def go_forward(self) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.go_forward()
+
+    def trigger_game_navigation(self) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.navigate("surfgambit://game")
+
+    def _focus_page(self) -> None:
+        tab = self.current_tab()
+        if tab is not None:
+            tab.canvas.focus_set()
 
     def open_in_new_tab(self, url: str) -> BrowserTab:
         return self.add_tab(url)
-
-    def _on_tab_changed(self, _event=None) -> None:
-        tab = self.current_tab()
-        if tab is not None:
-            self.update_chrome(tab)
-
-    def _on_tab_middle_click(self, event) -> None:
-        try:
-            index = self.notebook.index(f"@{event.x},{event.y}")
-            widget = self.nametowidget(self.notebook.tabs()[index])
-        except Exception:
-            return
-        if len(self.notebook.tabs()) == 1:
-            return
-        widget.destroy()
 
     # ------------------------------------------------------------------
     # Chrome updates
@@ -414,22 +521,21 @@ class BrowserApp(tk.Tk):
         if tab is None:
             return
         label = tab.title or "New tab"
-        try:
-            if str(tab) in self.notebook.tabs():
-                self.notebook.tab(
-                    tab, text=(label[:28] + "\u2026") if len(label) > 29 else label)
-        except tk.TclError:
-            pass
-        self.title(APP_NAME if label == APP_NAME else f"{label} - {APP_NAME}")
+        self.title("SurfGambit Browser" if label in ("SurfGambit", "New tab")
+                   else f"{label} - SurfGambit Browser")
         if self.focus_get() is not self.address:
             self.address_var.set(tab.current_url)
-        self.back_btn.state(["!disabled"] if tab.back_stack else ["disabled"])
-        self.forward_btn.state(["!disabled"] if tab.forward_stack else ["disabled"])
+        try:
+            self.back_btn.configure(state="normal" if tab.back_stack else "disabled")
+            self.forward_btn.configure(state="normal" if tab.forward_stack else "disabled")
+        except tk.TclError:
+            pass
         starred = self.store.is_bookmarked(tab.current_url)
-        self.star_btn.configure(text="\u2605" if starred else "\u2606")
+        self.star_btn.configure(text="\u2b50" if starred else "\u2606")
+        self.zoom_lbl.configure(text=f"{int(round(tab.zoom * 100))}%")
         self.right_label.configure(
-            text=f"zoom {int(round(tab.zoom * 100))}%"
-            + ("  \u00b7  scripts on" if self.settings.get("javascript") == "on" else ""))
+            text="scripts on" if self.settings.get("javascript") == "on" else "scripts off")
+        self._render_tab_strip()
 
     def update_loading_state(self) -> None:
         tab = self.current_tab()
@@ -478,7 +584,7 @@ class BrowserApp(tk.Tk):
     # Address bar
     # ------------------------------------------------------------------
     def resolve_input(self, text: str) -> Optional[str]:
-        return normalise_input(text, self.settings.get("search_engine", "Bing"))
+        return normalise_input(text, self.settings.get("search_engine", "DuckDuckGo"))
 
     def _on_address_enter(self, _event=None) -> Any:
         tab = self.current_tab()
@@ -487,11 +593,20 @@ class BrowserApp(tk.Tk):
         text = self.address_var.get().strip()
         if not text:
             return "break"
+        if self.search_engine_combo.get() == "Images":
+            tab.navigate("surfgambit://images?q=" + urllib.parse.quote(text))
+            return "break"
         target = self.resolve_input(text)
         if target:
             tab.navigate(target)
         tab.canvas.focus_set()
         return "break"
+
+    def _on_engine_changed(self, _event=None) -> None:
+        self.settings["search_engine"] = self.search_engine_combo.get()
+        self.store.save_settings(self.settings)
+        self.set_status(f"Search engine: {self.settings['search_engine']}",
+                        timeout_ms=2000)
 
     def _on_address_focus(self, _event=None) -> None:
         self.after(10, lambda: self.address.selection_range(0, "end"))
@@ -516,31 +631,33 @@ class BrowserApp(tk.Tk):
     # Find
     # ------------------------------------------------------------------
     def focus_find(self) -> None:
-        if not self._find_visible:
-            self.find_frame.pack(side="bottom", fill="x", before=self.status_label.master)
-            self._find_visible = True
         self.find_entry.focus_set()
         self.find_entry.selection_range(0, "end")
 
-    def close_find(self) -> None:
-        if not self._find_visible:
-            return
-        self.find_frame.pack_forget()
-        self._find_visible = False
+    def clear_find(self) -> None:
+        self.find_var.set("")
         tab = self.current_tab()
         if tab is not None:
             tab.search_term = ""
             tab.relayout()
-            tab.canvas.focus_set()
+        self.set_status("Done")
+        self._focus_page()
+
+    def close_find(self) -> None:
+        self.clear_find()
 
     def _run_find(self) -> None:
         tab = self.current_tab()
         if tab is None:
             return
         term = self.find_var.get()
+        if not term:
+            tab.search_term = ""
+            tab.relayout()
+            self.set_status("Done")
+            return
         hits = tab.find(term)
-        self.find_label.configure(
-            text=f"{hits} match{'es' if hits != 1 else ''}" if term else "")
+        self.set_status(f"{hits} match{'es' if hits != 1 else ''}")
 
     # ------------------------------------------------------------------
     # Zoom / fullscreen / navigation helpers
@@ -1004,8 +1121,7 @@ class BrowserApp(tk.Tk):
             pass
         try:
             self.mascot.stop()
-            for child in list(self.notebook.tabs()):
-                widget = self.nametowidget(child)
+            for widget in list(self.tabs):
                 widget.stop_game()
         except Exception:
             pass

@@ -20,6 +20,19 @@ __all__ = [
 
 esc = html.escape
 
+
+def _host_of(url: str) -> str:
+    try:
+        host = urllib.parse.urlsplit(url).hostname or url
+    except ValueError:
+        host = url
+    return host[4:] if host.startswith("www.") else host
+
+
+def _ellipsis(text: str, limit: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
 BASE_CSS = """
 body { font-family: sans-serif; background-color: #0b0b0c; color: #d8d8d8;
        margin: 0; padding: 32px 20px 60px; }
@@ -82,71 +95,152 @@ def _nav() -> str:
 # Welcome
 # ---------------------------------------------------------------------------
 
-def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]],
-                 ) -> str:
-    if profile:
-        greeting = (f'<p class="sub">Signed in as <strong>{esc(profile)}</strong> &middot; '
-                    f'<a href="surfgambit://logout">Sign out</a></p>')
-    else:
-        greeting = ('<p class="sub">Browsing as a guest &middot; '
-                    '<a href="surfgambit://login">Sign in</a></p>')
+def welcome_page(profile: Optional[str], bookmarks: List[Dict[str, str]]) -> str:
+    """The original start page, markup and styling unchanged."""
 
-    quick = ""
+    if profile:
+        greeting = (f'<p style="color: #00adb5; font-size: 16px; font-weight: bold;">'
+                    f'\U0001F47E Welcome back, {esc(profile)}! (Logged in via Secure Cookie)</p>'
+                    f'<a href="surfgambit://logout" style="font-size: 13px; color: #ff5722; '
+                    f'font-weight: bold;">Sign Out</a>')
+    else:
+        greeting = ('<a href="surfgambit://login" style="font-size: 14px; color: #00adb5; '
+                    'font-weight: bold;">\U0001F464 Sign In / Register</a>')
+
+    dial = ""
     if bookmarks:
         cells = []
         for bookmark in bookmarks[:6]:
             url = bookmark.get("url", "")
-            title = bookmark.get("title") or _host_of(url)
+            name = bookmark.get("title") or _host_of(url)
             cells.append(
-                f'<a class="btn" href="{esc(url, quote=True)}" '
-                f'title="{esc(url, quote=True)}">{esc(_ellipsis(title, 22))}</a> '
-            )
-        quick = (f'<div class="card"><h2>Quick dial</h2>'
-                 f'<p>{" ".join(cells)}</p></div>')
+                f'<div class="col" style="display: inline-block; width: 135px; '
+                f'background-color: #0d0d0d; border: 1px solid #222; border-radius: 8px; '
+                f'padding: 12px; margin: 6px; text-align: center; height: 60px;">'
+                f'<a href="{esc(url, quote=True)}" style="font-size: 11px; '
+                f'text-decoration: none; color: #00adb5;">{esc(_ellipsis(name, 22))}</a>'
+                f'</div>')
+        dial = ('<div style="text-align:center; margin: 0 auto 20px; max-width: 700px;">'
+                + "".join(cells) + '</div>')
 
-    body = f"""
-    <h1>SurfGambit</h1>
+    return f"""<html>
+<head>
+    <style>
+        body {{
+            font-family: sans-serif;
+            background-color: #000000;
+            color: #e0e0e0;
+            margin: 40px;
+            text-align: center;
+        }}
+        .card {{
+            background-color: #0d0d0d;
+            border: 1px solid #222;
+            padding: 25px;
+            margin: 20px auto;
+            max-width: 650px;
+            text-align: left;
+            border-radius: 8px;
+        }}
+        h1 {{
+            color: #00adb5;
+            font-size: 38px;
+            margin-bottom: 5px;
+            text-align: center;
+        }}
+        h2 {{
+            color: #00adb5;
+            font-size: 20px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+            margin-top: 0px;
+        }}
+        p {{
+            line-height: 1.6;
+            font-size: 14px;
+        }}
+        a {{
+            color: #00adb5;
+            font-weight: bold;
+            text-decoration: underline;
+        }}
+        .tech-list {{
+            background-color: #151515;
+            padding: 15px;
+            border-left: 4px solid #00adb5;
+            font-family: monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }}
+        alien {{ display: block; width: 64px; height: 64px; margin: 8px auto 0; }}
+    </style>
+</head>
+<body>
+    <h1>SurfGambit Browser</h1>
+    <p style="color: #888; font-size: 16px; margin-top: 5px;">A custom-built Python web engine rendered on raw Canvas.</p>
+
     {greeting}
-    {_nav()}
-    <div class="card">
-      <h2>Engine status</h2>
-      <table>
-        <tr><td>HTML tokenizer</td><td class="ok">state machine, implied tags, RAWTEXT</td></tr>
-        <tr><td>CSS cascade</td><td class="ok">specificity, inheritance, @media, shorthands</td></tr>
-        <tr><td>Layout</td><td class="ok">box model, inline flow, tables, collapsing margins</td></tr>
-        <tr><td>Network</td><td class="ok">GET/POST, TLS verified, gzip, chunked, HTTP cache</td></tr>
-        <tr><td>Scripting</td><td class="ok">SurfScript &mdash; loops, functions, DOM events</td></tr>
-        <tr><td>Painting</td><td class="ok">viewport culling, 40 000 px pages scroll at full speed</td></tr>
-      </table>
+
+    <div style="text-align: center; margin-top: 10px; margin-bottom: 4px;">
+        <alien></alien>
     </div>
-    {quick}
-    <div class="card">
-      <h2>Try these</h2>
-      <p class="mono">
-        <a href="https://example.com">example.com</a> &middot;
-        <a href="https://text.npr.org">text.npr.org</a> &middot;
-        <a href="https://news.ycombinator.com">news.ycombinator.com</a> &middot;
-        <a href="https://en.wikipedia.org/wiki/Web_browser">wikipedia.org</a> &middot;
-        <a href="surfgambit://demo">the script demo</a>
-      </p>
-      <p class="muted">Type a search phrase in the address bar to search the web.</p>
+
+    <div style="text-align: center; margin-bottom: 20px; margin-top: 15px;">
+        <a href="surfgambit://bookmarks" style="margin-right: 15px; font-weight: bold;">\u2b50 Bookmarks</a> |
+        <a href="surfgambit://history" style="margin-right: 15px; font-weight: bold;">\U0001F4DC History Log</a> |
+        <a href="surfgambit://downloads" style="font-weight: bold;">\u2b07\ufe0f Downloads</a> |
+        <a href="surfgambit://settings" style="font-weight: bold;">\u2699\ufe0f Settings</a>
     </div>
-    <p class="muted" style="text-align:center; margin-top:34px;">
-      A browser built from scratch in Python
-    </p>
-    """
-    return _document("SurfGambit", body)
 
+    {dial}
 
-def _host_of(url: str) -> str:
-    try:
-        return urllib.parse.urlsplit(url).hostname or url
-    except ValueError:
-        return url
+    <div class="card">
+        <h2>\U0001F680 Deeply Custom Architecture</h2>
+        <p>This browser is written from scratch without high-level rendering frameworks, implementing a modular engine model:</p>
+        <div class="tech-list">
+            - [network.py]: TCP Sockets, TLS, Gzip decompression, Chunked Transfer Decoding.<br>
+            - [cookies.py]: Custom stateful Cookie Jar parsing and injecting active sessions.<br>
+            - [accounts.py]: PBKDF2-HMAC-SHA256 password hashing and local credential caches.<br>
+            - [parser.py]: Custom state-machine HTML DOM Parser and Cascading CSS Styling Engine.<br>
+            - [layout.py]: Vertical block and horizontal inline-wrap layout, plus alignment controls.
+        </div>
+    </div>
 
+    <div class="card">
+        <h2>\U0001F5BC PNG/GIF Image Support</h2>
+        <p>This browser pulls actual image resources directly through raw socket streams, decodes them via standard library PhotoImage on the main loop, and reflows layouts on image dimensions detection.</p>
+        <p>Try loading any standard image-heavy page. JPEGs fallback gracefully to text-based alt placeholders.</p>
+    </div>
 
-def _ellipsis(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+    <div class="card">
+        <h2>\U0001F310 Interactive Features</h2>
+        <p>This browser is equipped with power-user controls for testing:</p>
+        <p>
+            - <b>Multiple Tabs</b>: Browse multiple pages concurrently.<br>
+            - <b>Precise Zoom</b>: Use \u2795 / \u2796 buttons to scale elements with responsive re-layout.<br>
+            - <b>Developer Tools</b>: Toggle the side panel to view DOM, CSS, or Raw HTML source!<br>
+            - <b>History Navigation</b>: Full back/forward page history tracking.<br>
+            - <b>Word Wrapping &amp; Alignment</b>: Modern word flow and CSS style resolution.
+        </p>
+    </div>
+
+    <div class="card">
+        <h2>\U0001F517 Standard Web Testbench</h2>
+        <p>Try entering these lightweight URLs in the address bar above, or type search terms to query the selected engine directly:</p>
+        <p>
+            - <a href="http://example.com">http://example.com</a> (Standard HTTP test site)<br>
+            - <a href="http://neverssl.com">http://neverssl.com</a> (Great raw no-SSL sandbox)<br>
+            - <a href="https://text.npr.org">https://text.npr.org</a> (NPR News Text-Only)<br>
+            - <a href="https://news.ycombinator.com">https://news.ycombinator.com</a> (Hacker News)
+        </p>
+    </div>
+
+    <div style="color: #444; font-size: 12px; margin-top: 40px;">
+        SurfGambit | Standalone Sandbox Session
+    </div>
+</body>
+</html>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -223,82 +317,66 @@ def downloads_page(entries: List[Dict[str, str]]) -> str:
 
 def settings_page(settings: Dict[str, str], message: str = "",
                   error: str = "") -> str:
-    # Keep these lists in step with core.search, otherwise a saved choice
-    # silently falls back to the default engine.
-    from core.search import SEARCH_ENGINES
+    """The original ⚙️ Browser Configuration card, plus the two switches the
+    engine needs (TLS verification and page scripts)."""
 
-    ua_options = {
-        "Chrome": "Chrome on Windows",
-        "Firefox": "Firefox on Windows",
-        "Safari": "Safari on macOS",
-        "SurfGambit": "SurfGambit (itself)",
-    }
-    engines = list(SEARCH_ENGINES)
-
-    def options(values, selected):
-        return "".join(
-            f'<option value="{esc(v, quote=True)}"'
-            f'{" selected" if v == selected else ""}>{esc(label if isinstance(values, dict) else v)}</option>'
-            for v, label in (values.items() if isinstance(values, dict) else [(v, v) for v in values])
-        )
-
-    ua_map = dict(ua_options)
-    banner = ""
-    if message:
-        banner = f'<p class="ok">{esc(message)}</p>'
+    banner = (f'<p style="color: #4caf50; font-weight: bold; text-align: center;">'
+              f'\U0001F49A {esc(message)}</p>') if message else ""
     if error:
-        banner = f'<p class="danger">{esc(error)}</p>'
+        banner += (f'<p style="color: #ff5722; font-weight: bold; text-align: center;">'
+                   f'\U0001F6D1 {esc(error)}</p>')
 
-    verify_checked = " checked" if settings.get("verify_tls", "on") == "on" else ""
-    js_checked = " checked" if settings.get("javascript", "off") == "on" else ""
+    ua_val = esc(settings.get("user_agent_name", "Chrome"))
+    se_val = esc(settings.get("search_engine", "DuckDuckGo"))
+    mascot_val = esc(settings.get("mascot_active", "on"))
+    verify_val = esc(settings.get("verify_tls", "on"))
+    js_val = esc(settings.get("javascript", "off"))
 
-    body = f"""
-    <h1>Settings</h1>{_nav()}
-    <div class="card">
-      <h2>Browser</h2>{banner}
-      <form action="surfgambit://settings-save" method="GET">
-        <label>Default search engine</label>
-        <select name="se">{options(engines, settings.get("search_engine", "Bing"))}</select>
-
-        <label>User agent</label>
-        <select name="ua" style="width:auto;">{options(ua_map, settings.get("user_agent_name", "Chrome"))}</select>
-
-        <label>Certificate validation</label>
-        <select name="verify" style="width:auto;">
-          <option value="on"{verify_checked}>Verify TLS certificates (recommended)</option>
-          <option value="off"{"" if verify_checked else " selected"}>Do not verify (unsafe)</option>
-        </select>
-
-        <label>Run page scripts (SurfScript)</label>
-        <select name="js" style="width:auto;">
-          <option value="off"{"" if js_checked else " selected"}>Off</option>
-          <option value="on"{js_checked}>On</option>
-        </select>
-
-        <label>Mascot animation</label>
-        <select name="mascot" style="width:auto;">
-          <option value="on"{' selected' if settings.get('mascot_active','on')=='on' else ''}>On</option>
-          <option value="off"{' selected' if settings.get('mascot_active','on')!='on' else ''}>Off</option>
-        </select>
-
-        <button type="submit">Save settings</button>
-      </form>
+    return f"""<html>
+<head>
+    <style>
+        body {{ font-family: sans-serif; background-color: #000000; color: #e0e0e0; margin: 40px; text-align: center; }}
+        h1 {{ color: #00adb5; }}
+        .card {{ background-color: #0d0d0d; border: 1px solid #222; padding: 30px; margin: 20px auto; max-width: 500px; text-align: left; border-radius: 8px; }}
+        a {{ color: #00adb5; font-weight: bold; text-decoration: underline; }}
+        .nav {{ margin-bottom: 25px; }}
+        input, button {{ width: 100%; height: 28px; margin-bottom: 15px; border-radius: 4px; }}
+    </style>
+</head>
+<body>
+    <h1>SurfGambit Settings</h1>
+    <div class="nav">
+        <a href="surfgambit://welcome">Home</a> |
+        <a href="surfgambit://bookmarks">Bookmarks</a> |
+        <a href="surfgambit://history">History</a>
     </div>
+
     <div class="card">
-      <h2>Data</h2>
-      <p class="muted">Everything is stored locally in <code>{esc(settings.get("data_dir", ""))}</code>.</p>
-      <p class="actions">
-        <a class="danger" href="surfgambit://clear-history">Clear history</a> &middot;
-        <a class="danger" href="surfgambit://clear-bookmarks">Clear bookmarks</a> &middot;
-        <a class="danger" href="surfgambit://clear-cookies">Clear cookies</a>
-      </p>
-    </div>"""
-    return _document("Settings", body)
+        <h2 style="color: #00adb5; margin-top: 0px; margin-bottom: 20px; text-align: center;">\u2699\ufe0f Browser Configuration</h2>
+        {banner}
+        <form action="surfgambit://settings-save" method="GET">
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">User-Agent Preset (Chrome, Firefox, Safari)</p>
+            <input type="text" name="ua" value="{ua_val}"><br>
 
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Default Search Engine (Google, DuckDuckGo, Wikipedia, Bing)</p>
+            <input type="text" name="se" value="{se_val}"><br>
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Mascot Active (on / off)</p>
+            <input type="text" name="mascot" value="{mascot_val}"><br>
+
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Verify TLS Certificates (on / off)</p>
+            <input type="text" name="verify" value="{verify_val}"><br>
+
+            <p style="font-size: 13px; color: #aaa; margin-bottom: 5px;">Run Page Scripts / SurfScript (on / off)</p>
+            <input type="text" name="js" value="{js_val}"><br>
+
+            <button type="submit" style="background-color: #00adb5; color: white; border: none; font-weight: bold; cursor: pointer; height: 32px; margin-top: 10px;">Save Settings</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
 
 def login_page(error: str = "", message: str = "", has_users: bool = True) -> str:
     banner = ""

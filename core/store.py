@@ -23,7 +23,7 @@ VISIT_MERGE_SECONDS = 60
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "homepage": "surfgambit://welcome",
-    "search_engine": "Bing",
+    "search_engine": "DuckDuckGo",
     "user_agent_name": "Chrome",
     "verify_tls": "on",
     "javascript": "off",
@@ -36,7 +36,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 }
 
 VALID_CHOICES = {
-    "search_engine": ["Bing", "Google", "DuckDuckGo", "Startpage", "Wikipedia"],
+    "search_engine": ["Google", "DuckDuckGo", "Wikipedia", "Bing", "Startpage"],
     "user_agent_name": ["Chrome", "Firefox", "Safari", "SurfGambit"],
     "verify_tls": ["on", "off"],
     "javascript": ["on", "off"],

@@ -912,6 +912,7 @@ class BrowserTab(tk.Frame):
         total = int(self.layout.height) + 40
         self.canvas.config(scrollregion=(0, 0, width, total))
         self._sync_form_widgets()
+        self._sync_mascot_boxes()
 
         if self.search_term:
             self.app.set_status(
@@ -949,6 +950,23 @@ class BrowserTab(tk.Frame):
                                  height=max(1, int(h)))
             except tk.TclError:
                 self._widget_pos.pop(widget, None)
+
+    def _sync_mascot_boxes(self) -> None:
+        """`<alien>` blocks get a live pixel mascot drawn on top of them."""
+        if self.layout is None:
+            return
+        for box in self.layout.walk():
+            node = box.node
+            if node.tag != "alien":
+                continue
+            widget = self._widget_for_node.get(node)
+            size = int(min(max(box.height or 64, 40), 96))
+            if widget is None or not widget.winfo_exists():
+                from ui.mascot import Mascot
+                widget = Mascot(self.canvas, size=size, bg="#000000",
+                                on_hover=lambda msg: self.app.set_status(msg or "Done"))
+                self._widget_for_node[node] = widget
+            self._position_widget(widget, box.x, box.y, box.width or 64, box.height or 64)
 
     def schedule_paint(self) -> None:
         """Coalesce repeated repaint requests (e.g. many images finishing)."""
